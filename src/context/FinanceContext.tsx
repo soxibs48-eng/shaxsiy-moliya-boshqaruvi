@@ -1363,6 +1363,75 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     return true;
   };
 
+  // Demo ma'lumotlarni yuklash (Test va tahlil uchun 25+ ta realistik operatsiya)
+  const loadDemoData = () => {
+    const demoWallets: Wallet[] = [
+      { id: 'wallet-1', name: 'Naqd pullar', type: 'cash', currency: 'UZS', balance: 3850000, color: '#10b981', icon: 'banknote' },
+      { id: 'wallet-2', name: 'Asosiy karta (Uzcard)', type: 'card', currency: 'UZS', balance: 14200000, color: '#3b82f6', icon: 'credit-card' },
+      { id: 'wallet-3', name: 'Valyuta kartasi (Visa USD)', type: 'card', currency: 'USD', balance: 850, color: '#8b5cf6', icon: 'credit-card' },
+      { id: 'wallet-4', name: 'Jamg\'arma depozit', type: 'savings', currency: 'UZS', balance: 25000000, color: '#f59e0b', icon: 'piggy-bank' },
+    ];
+
+    const demoTransactions: Transaction[] = [
+      // Sentabr 2026
+      { id: 'tx-sep-1', walletId: 'wallet-2', type: 'income', amount: 12000000, currency: 'UZS', category: 'Asosiy maosh', date: '2026-09-01', note: 'Sentabr oyi ish haqi' },
+      { id: 'tx-sep-2', walletId: 'wallet-3', type: 'income', amount: 300, currency: 'USD', category: 'Frilans', date: '2026-09-03', note: 'Mobil ilova dizayni uchun' },
+      { id: 'tx-sep-3', walletId: 'wallet-2', type: 'expense', amount: 1850000, currency: 'UZS', category: 'Oziq-ovqat', date: '2026-09-05', note: 'Oylik supermarket xaridi' },
+      { id: 'tx-sep-4', walletId: 'wallet-1', type: 'expense', amount: 450000, currency: 'UZS', category: 'Kafe va restoran', date: '2026-09-08', note: 'Hamkasblar bilan kechki ovqat' },
+      { id: 'tx-sep-5', walletId: 'wallet-1', type: 'expense', amount: 380000, currency: 'UZS', category: 'Transport', date: '2026-09-12', note: 'Yoqilg\'i quyish va taksi' },
+      { id: 'tx-sep-6', walletId: 'wallet-2', type: 'expense', amount: 420000, currency: 'UZS', category: 'Kommunal to\'lovlar', date: '2026-09-15', note: 'Gaz, elektr va suv to\'lovi' },
+      { id: 'tx-sep-7', walletId: 'wallet-2', type: 'expense', amount: 1200000, currency: 'UZS', category: 'Ta\'lim', date: '2026-09-20', note: 'Ingliz tili kursi to\'lovi' },
+      { id: 'tx-sep-8', walletId: 'wallet-2', toWalletId: 'wallet-1', type: 'transfer', amount: 1500000, currency: 'UZS', category: 'O\'tkazma', date: '2026-09-22', note: 'Kartadan naqd yechib olish' },
+
+      // Oktabr 2026
+      { id: 'tx-oct-1', walletId: 'wallet-2', type: 'income', amount: 12000000, currency: 'UZS', category: 'Asosiy maosh', date: '2026-10-01', note: 'Oktabr oyi ish haqi' },
+      { id: 'tx-oct-2', walletId: 'wallet-2', type: 'income', amount: 4500000, currency: 'UZS', category: 'Biznes va savdo', date: '2026-10-03', note: 'Onlayn do\'kon daromadi' },
+      { id: 'tx-oct-3', walletId: 'wallet-2', type: 'expense', amount: 2100000, currency: 'UZS', category: 'Oziq-ovqat', date: '2026-10-06', note: 'Makro supermarket xaridlari' },
+      { id: 'tx-oct-4', walletId: 'wallet-1', type: 'expense', amount: 620000, currency: 'UZS', category: 'Kafe va restoran', date: '2026-10-10', note: 'Oila bilan tushlik' },
+      { id: 'tx-oct-5', walletId: 'wallet-2', type: 'expense', amount: 390000, currency: 'UZS', category: 'Kommunal to\'lovlar', date: '2026-10-14', note: 'Kommunal xizmatlar' },
+      { id: 'tx-oct-6', walletId: 'wallet-2', type: 'expense', amount: 1500000, currency: 'UZS', category: 'Kiyim-kechak', date: '2026-10-16', note: 'Qishki kiyimlar xaridi' },
+      { id: 'tx-oct-7', walletId: 'wallet-1', type: 'expense', amount: 280000, currency: 'UZS', category: 'Sog\'liq va dorilar', date: '2026-10-18', note: 'Vitaminlar va dori-darmon' },
+      { id: 'tx-oct-8', walletId: 'wallet-3', type: 'income', amount: 250, currency: 'USD', category: 'Frilans', date: '2026-10-21', note: 'Sayt dasturlash' },
+      { id: 'tx-oct-9', walletId: 'wallet-1', type: 'expense', amount: 850000, currency: 'UZS', category: 'Dam olish', date: '2026-10-24', note: 'Dam olish maskani sayohati' },
+      { id: 'tx-oct-10', walletId: 'wallet-2', toWalletId: 'wallet-4', type: 'transfer', amount: 3000000, currency: 'UZS', category: 'O\'tkazma', date: '2026-10-26', note: 'Jamg\'arma depozitiga qo\'shildi' },
+
+      // Noyabr 2026
+      { id: 'tx-nov-1', walletId: 'wallet-2', type: 'income', amount: 12000000, currency: 'UZS', category: 'Asosiy maosh', date: '2026-11-01', note: 'Noyabr oyi uchun oylik ish haqi' },
+      { id: 'tx-nov-2', walletId: 'wallet-3', type: 'income', amount: 250, currency: 'USD', category: 'Frilans', date: '2026-11-02', note: 'Web-dizayn loyihasi uchun to\'lov' },
+      { id: 'tx-nov-3', walletId: 'wallet-2', type: 'expense', amount: 850000, currency: 'UZS', category: 'Oziq-ovqat', date: '2026-11-02', note: 'Korzinka supermarketidan oylik oziq-ovqat xaridi' },
+      { id: 'tx-nov-4', walletId: 'wallet-1', type: 'expense', amount: 180000, currency: 'UZS', category: 'Kafe va restoran', date: '2026-11-03', note: 'Do\'stlar bilan tushlik' },
+      { id: 'tx-nov-5', walletId: 'wallet-1', type: 'expense', amount: 350000, currency: 'UZS', category: 'Transport', date: '2026-11-03', note: 'Avtomobilga yoqilg\'i quyish' },
+      { id: 'tx-nov-6', walletId: 'wallet-2', type: 'expense', amount: 420000, currency: 'UZS', category: 'Kommunal to\'lovlar', date: '2026-11-04', note: 'Elektr energiyasi va gaz to\'lovlari' },
+      { id: 'tx-nov-7', walletId: 'wallet-2', type: 'expense', amount: 220000, currency: 'UZS', category: 'Aloqa va internet', date: '2026-11-04', note: 'Uy interneti va mobil tarif to\'lovi' },
+      { id: 'tx-nov-8', walletId: 'wallet-2', toWalletId: 'wallet-1', type: 'transfer', amount: 500000, currency: 'UZS', category: 'O\'tkazma', date: '2026-11-04', note: 'Kartadan naqdga' },
+    ];
+
+    const demoBudgets: Budget[] = [
+      { id: 'b-1', category: 'Oziq-ovqat', limitAmount: 2500000, currency: 'UZS' },
+      { id: 'b-2', category: 'Kafe va restoran', limitAmount: 800000, currency: 'UZS' },
+      { id: 'b-3', category: 'Transport', limitAmount: 600000, currency: 'UZS' },
+      { id: 'b-4', category: 'Kommunal to\'lovlar', limitAmount: 500000, currency: 'UZS' },
+    ];
+
+    const demoGoals: Goal[] = [
+      { id: 'g-1', title: 'Yangi MacBook Pro', targetAmount: 2000, currentAmount: 850, currency: 'USD', deadline: '2026-12-31', color: '#10b981', icon: 'laptop' },
+      { id: 'g-2', title: 'Oila bilan sayohat', targetAmount: 25000000, currentAmount: 10000000, currency: 'UZS', deadline: '2027-06-01', color: '#3b82f6', icon: 'palmtree' },
+      { id: 'g-3', title: 'Qora kun uchun zaxira', targetAmount: 5000, currentAmount: 2100, currency: 'USD', deadline: '2027-12-31', color: '#8b5cf6', icon: 'shield-check' },
+    ];
+
+    const demoDebts: Debt[] = [
+      { id: 'debt-1', type: 'lent', personName: 'Anvar aka (O‘rtoq)', phone: '+998 90 123 45 67', amount: 2000000, paidAmount: 500000, currency: 'UZS', walletId: 'wallet-1', dueDate: '2026-11-12', isClosed: false, note: 'Tadbirkorlik uchun vaqtincha yordam' },
+      { id: 'debt-2', type: 'borrowed', personName: 'Alisher (Akam)', phone: '+998 97 765 43 21', amount: 300, paidAmount: 0, currency: 'USD', walletId: 'wallet-3', dueDate: '2026-12-05', isClosed: false, note: 'Uy jihozlari uchun olingan' },
+    ];
+
+    setWallets(demoWallets);
+    setTransactions(demoTransactions);
+    setBudgets(demoBudgets);
+    setGoals(demoGoals);
+    setDebts(demoDebts);
+    showToast("26 ta realistik demo operatsiya va ma'lumotlar yuklandi! 🎉");
+  };
+
   return (
     <FinanceContext.Provider
       value={{
@@ -1421,6 +1490,7 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
         setBudgets,
         setGoals,
         setDebts,
+        loadDemoData,
         toastMessage,
         showToast,
         clearToast,

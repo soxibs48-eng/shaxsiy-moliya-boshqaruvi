@@ -201,6 +201,9 @@ export interface FinanceContextType {
   setGoals: React.Dispatch<React.SetStateAction<Goal[]>>;
   setDebts: React.Dispatch<React.SetStateAction<Debt[]>>;
 
+  // Demo ma'lumotlar va eksport
+  loadDemoData: () => void;
+
   // Toast / Xabarlar
   toastMessage: string | null;
   showToast: (msg: string) => void;
