@@ -19,6 +19,14 @@ import {
 } from '../types/finance';
 import { formatCurrency, formatExchangeRate } from '../utils/formatters';
 import { getLiveExchangeRates } from '../services/currencyApi';
+import {
+  notifyTransactionEvent,
+  notifyTransferEvent,
+  notifyGoalEvent,
+  notifyDebtCreatedEvent,
+  notifyDebtRepaidEvent,
+  notifyBudgetAlertEvent,
+} from '../services/telegramBot';
 
 // Standart valyuta kurslari (1 birlik xorijiy valyutaning UZS dagi qiymati)
 const DEFAULT_RATES: ExchangeRates = {
@@ -808,6 +816,17 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
 
     setTransactions(prev => [newTx, ...prev]);
     showToast("Pul muvaffaqiyatli o'tkazildi!");
+
+    // Telegram botga xabarnoma yuborish
+    notifyTransferEvent({
+      fromWallet: fromWallet.name,
+      toWallet: toWallet.name,
+      sentAmountText: formatCurrency(amount, fromWallet.currency),
+      receivedAmountText: formatCurrency(receivedAmount, toWallet.currency),
+      feeText: fee > 0 ? formatCurrency(fee, fromWallet.currency) : undefined,
+      date: formattedDate,
+    });
+
     return true;
   };
 
@@ -849,6 +868,38 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
 
     setTransactions(prev => [newTx, ...prev]);
     showToast(newTx.type === 'income' ? "Daromad qo'shildi!" : "Xarajat saqlandi!");
+
+    // Telegram botga xabarnoma yuborish
+    notifyTransactionEvent({
+      type: newTx.type,
+      amountText: formatCurrency(newTx.amount, newTx.currency),
+      category: newTx.category,
+      walletName: wallet.name,
+      note: newTx.note,
+      date: newTx.date,
+    });
+
+    // Byudjet limitini tekshirish (faqat xarajat bo'lsa)
+    if (newTx.type === 'expense') {
+      const budget = budgets.find(
+        (b) => b.category.toLowerCase() === newTx.category.toLowerCase()
+      );
+      if (budget) {
+        const currentSpent = getBudgetSpent(budget.category, budget.currency);
+        const addedSpent = convertAmount(newTx.amount, newTx.currency, budget.currency);
+        const totalSpent = currentSpent + addedSpent;
+        if (totalSpent > budget.limitAmount) {
+          const percent = Math.round((totalSpent / budget.limitAmount) * 100);
+          notifyBudgetAlertEvent({
+            category: budget.category,
+            limitText: formatCurrency(budget.limitAmount, budget.currency),
+            spentText: formatCurrency(totalSpent, budget.currency),
+            percent,
+          });
+        }
+      }
+    }
+
     return true;
   };
 
@@ -1061,6 +1112,19 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
 
     setTransactions(prev => [newTx, ...prev]);
     showToast(`"${goal.title}" maqsadiga mablag' muvaffaqiyatli ajratildi! 🎉`);
+
+    // Telegram botga xabarnoma yuborish
+    const newTotalGoal = goal.currentAmount + addedToGoal;
+    const goalPercent = Math.min(100, Math.round((newTotalGoal / goal.targetAmount) * 100));
+    notifyGoalEvent({
+      title: goal.title,
+      addedText: formatCurrency(addedToGoal, goal.currency),
+      currentText: formatCurrency(newTotalGoal, goal.currency),
+      targetText: formatCurrency(goal.targetAmount, goal.currency),
+      percent: goalPercent,
+      walletName: wallet.name,
+    });
+
     return true;
   };
 
@@ -1148,6 +1212,18 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
 
     setDebts(prev => [newDebt, ...prev]);
     showToast(debtData.type === 'lent' ? `"${debtData.personName}"ga qarz berildi!` : `"${debtData.personName}"dan qarz olindi!`);
+
+    // Telegram botga xabarnoma yuborish
+    notifyDebtCreatedEvent({
+      type: debtData.type,
+      personName: debtData.personName,
+      amountText: formatCurrency(debtData.amount, debtData.currency),
+      walletName: wallet.name,
+      dueDate: debtData.dueDate,
+      phone: debtData.phone,
+      note: debtData.note,
+    });
+
     return true;
   };
 
@@ -1272,6 +1348,18 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     } else {
       showToast(`"${debt.personName}" qarziga ${formatCurrency(repayAmount, debt.currency)} to'landi!`);
     }
+
+    // Telegram botga xabarnoma yuborish
+    const remainingAfter = Math.max(0, debt.amount - newPaidAmount);
+    notifyDebtRepaidEvent({
+      type: debt.type,
+      personName: debt.personName,
+      repayText: formatCurrency(repayAmount, debt.currency),
+      remainingText: formatCurrency(remainingAfter, debt.currency),
+      isClosed: isNowClosed,
+      walletName: wallet.name,
+    });
+
     return true;
   };
 

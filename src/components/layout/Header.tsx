@@ -6,11 +6,13 @@ import {
   Moon,
   Plus,
   Wallet as WalletIcon,
+  Send,
 } from 'lucide-react';
 import { useFinance } from '../../context/FinanceContext';
 import { Currency, NavigationTab } from '../../types/finance';
 import { formatCurrency, getFormattedToday } from '../../utils/formatters';
 import { ExchangeRatesModal } from '../wallets/ExchangeRatesModal';
+import { TelegramSettingsModal } from '../modals/TelegramSettingsModal';
 
 const pageTitles: Record<NavigationTab, { title: string; subtitle: string }> = {
   dashboard: {
@@ -54,6 +56,7 @@ export const Header: React.FC = () => {
   } = useFinance();
 
   const [isRatesModalOpen, setIsRatesModalOpen] = useState(false);
+  const [isTelegramModalOpen, setIsTelegramModalOpen] = useState(false);
 
   const currencies: Currency[] = ['UZS', 'USD', 'EUR'];
   const totalBalance = getTotalBalance();
@@ -154,7 +157,18 @@ export const Header: React.FC = () => {
             </div>
           </button>
 
-          {/* 4. Dark/Light rejimi toggle */}
+          {/* 4. Telegram Bot Integratsiyasi */}
+          <button
+            onClick={() => setIsTelegramModalOpen(true)}
+            className="p-2 sm:p-2.5 rounded-xl bg-slate-100 dark:bg-slate-800/90 text-sky-500 hover:text-sky-600 dark:hover:text-sky-400 border border-slate-200/80 dark:border-slate-700/60 transition-colors shadow-sm relative group"
+            title="Telegram Bot (@xsobchi_bot) integratsiyasi va sozlamalari"
+            aria-label="Telegram Bot sozlamalari"
+          >
+            <Send className="w-4 h-4" />
+            <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-sky-500 rounded-full border-2 border-white dark:border-slate-900" />
+          </button>
+
+          {/* 5. Dark/Light rejimi toggle */}
           <button
             onClick={toggleTheme}
             className="p-2 sm:p-2.5 rounded-xl bg-slate-100 dark:bg-slate-800/90 text-slate-600 dark:text-slate-300 hover:text-emerald-500 dark:hover:text-emerald-400 border border-slate-200/80 dark:border-slate-700/60 transition-colors shadow-sm"
@@ -168,7 +182,7 @@ export const Header: React.FC = () => {
             )}
           </button>
 
-          {/* 5. "+ Yangi operatsiya" yashil tugmasi (Haqiqiy TransactionModal ochadi) */}
+          {/* 6. "+ Yangi operatsiya" yashil tugmasi (Haqiqiy TransactionModal ochadi) */}
           <button
             onClick={() => openTxModal('expense')}
             className="flex items-center gap-1.5 px-3.5 py-2 sm:px-4 sm:py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-semibold text-xs sm:text-sm shadow-md shadow-emerald-600/30 transition-all duration-150"
@@ -185,6 +199,12 @@ export const Header: React.FC = () => {
       <ExchangeRatesModal
         isOpen={isRatesModalOpen}
         onClose={() => setIsRatesModalOpen(false)}
+      />
+
+      {/* Telegram bot sozlamalari modali */}
+      <TelegramSettingsModal
+        isOpen={isTelegramModalOpen}
+        onClose={() => setIsTelegramModalOpen(false)}
       />
     </header>
   );

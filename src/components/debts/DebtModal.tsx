@@ -355,3 +355,4 @@ export const DebtModal: React.FC<DebtModalProps> = ({
     </div>
   );
 };
+
