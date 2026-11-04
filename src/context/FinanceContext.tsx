@@ -14,6 +14,7 @@ import {
   FinanceContextType,
   TransferParams,
   ContributeGoalParams,
+  RepayDebtParams,
   WalletType,
 } from '../types/finance';
 import { formatCurrency, formatExchangeRate } from '../utils/formatters';
@@ -225,30 +226,30 @@ const INITIAL_GOALS: Goal[] = [
 // Standart namunaviy qarzlar
 const INITIAL_DEBTS: Debt[] = [
   {
-    id: 'd-1',
+    id: 'debt-1',
     type: 'lent',
-    personName: 'Alisher Vohidov',
+    personName: 'Anvar aka (O‘rtoq)',
     phone: '+998 90 123 45 67',
-    amount: 1500000,
+    amount: 2000000,
     paidAmount: 500000,
     currency: 'UZS',
     walletId: 'wallet-1',
-    dueDate: '2026-11-20',
+    dueDate: '2026-11-12',
     isClosed: false,
-    note: 'Telefon ta\'miri uchun olgan',
+    note: 'Tadbirkorlik uchun vaqtincha yordam',
   },
   {
-    id: 'd-2',
+    id: 'debt-2',
     type: 'borrowed',
-    personName: 'Sardor aka',
+    personName: 'Alisher (Akam)',
     phone: '+998 97 765 43 21',
-    amount: 100,
+    amount: 300,
     paidAmount: 0,
     currency: 'USD',
     walletId: 'wallet-3',
-    dueDate: '2026-11-25',
+    dueDate: '2026-12-05',
     isClosed: false,
-    note: 'Kripto savdo uchun vaqtincha',
+    note: 'Uy jihozlari uchun olingan',
   },
 ];
 
@@ -1063,6 +1064,217 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     return true;
   };
 
+  // Qarzlar CRUD va Qaytarish
+  const addDebt = (debtData: Omit<Debt, 'id' | 'paidAmount' | 'isClosed'> & { paidAmount?: number }): boolean => {
+    const wallet = wallets.find(w => w.id === debtData.walletId);
+    if (!wallet) {
+      showToast("Tanlangan hamyon topilmadi!");
+      return false;
+    }
+
+    if (debtData.amount <= 0) {
+      showToast("Qarz summasi 0 dan katta bo'lishi kerak!");
+      return false;
+    }
+
+    // Hamyon valyutasida kerak bo'ladigan summa
+    const amountInWalletCurrency = convertAmount(debtData.amount, debtData.currency, wallet.currency);
+
+    if (debtData.type === 'lent') {
+      // Men qarz berdim: hamyondan pul chiqib ketadi
+      if (wallet.balance < amountInWalletCurrency) {
+        showToast("Hamyonda qarz berish uchun yetarli mablag' yo'q!");
+        return false;
+      }
+
+      setWallets(prev =>
+        prev.map(w => {
+          if (w.id === debtData.walletId) {
+            const newBal = Math.max(0, Math.round((w.balance - amountInWalletCurrency + Number.EPSILON) * 100) / 100);
+            return { ...w, balance: newBal };
+          }
+          return w;
+        })
+      );
+
+      // Tranzaksiya yozish (Chiqim)
+      const today = new Date().toISOString().split('T')[0];
+      const newTx: Transaction = {
+        id: `tx-debt-${Date.now()}`,
+        walletId: wallet.id,
+        type: 'expense',
+        amount: amountInWalletCurrency,
+        currency: wallet.currency,
+        category: 'Qarz berish',
+        date: today,
+        note: `Qarz berildi: ${debtData.personName}${debtData.note ? ` (${debtData.note})` : ''}`,
+      };
+      setTransactions(prev => [newTx, ...prev]);
+    } else {
+      // Men qarz oldim: hamyonga pul kelib tushadi
+      setWallets(prev =>
+        prev.map(w => {
+          if (w.id === debtData.walletId) {
+            const newBal = Math.round((w.balance + amountInWalletCurrency + Number.EPSILON) * 100) / 100;
+            return { ...w, balance: newBal };
+          }
+          return w;
+        })
+      );
+
+      // Tranzaksiya yozish (Kirim)
+      const today = new Date().toISOString().split('T')[0];
+      const newTx: Transaction = {
+        id: `tx-debt-${Date.now()}`,
+        walletId: wallet.id,
+        type: 'income',
+        amount: amountInWalletCurrency,
+        currency: wallet.currency,
+        category: 'Qarz olish',
+        date: today,
+        note: `Qarz olindi: ${debtData.personName}${debtData.note ? ` (${debtData.note})` : ''}`,
+      };
+      setTransactions(prev => [newTx, ...prev]);
+    }
+
+    const paid = debtData.paidAmount || 0;
+    const isClosed = paid >= debtData.amount;
+    const newDebt: Debt = {
+      ...debtData,
+      id: `debt-${Date.now()}`,
+      paidAmount: paid,
+      isClosed,
+    };
+
+    setDebts(prev => [newDebt, ...prev]);
+    showToast(debtData.type === 'lent' ? `"${debtData.personName}"ga qarz berildi!` : `"${debtData.personName}"dan qarz olindi!`);
+    return true;
+  };
+
+  const updateDebt = (id: string, updatedFields: Partial<Debt>) => {
+    setDebts(prev =>
+      prev.map(d => {
+        if (d.id === id) {
+          const updated = { ...d, ...updatedFields };
+          if (updated.paidAmount !== undefined && updated.amount !== undefined) {
+            updated.isClosed = updated.paidAmount >= updated.amount;
+          }
+          return updated;
+        }
+        return d;
+      })
+    );
+    showToast("Qarz ma'lumotlari yangilandi!");
+  };
+
+  const deleteDebt = (id: string) => {
+    const target = debts.find(d => d.id === id);
+    setDebts(prev => prev.filter(d => d.id !== id));
+    showToast(`"${target?.personName || 'Qarz'}" o'chirildi`);
+  };
+
+  const repayDebt = (params: RepayDebtParams): boolean => {
+    const { debtId, repayAmount, walletId, note } = params;
+    const debt = debts.find(d => d.id === debtId);
+    const wallet = wallets.find(w => w.id === walletId);
+
+    if (!debt || !wallet) {
+      showToast("Qarz yoki hamyon topilmadi!");
+      return false;
+    }
+
+    if (repayAmount <= 0) {
+      showToast("Qaytarilayotgan summa 0 dan katta bo'lishi kerak!");
+      return false;
+    }
+
+    const remaining = debt.amount - debt.paidAmount;
+    if (repayAmount > remaining + 0.001) {
+      showToast(`Qaytarish summasi qolgan qarzdorlikdan (${formatCurrency(remaining, debt.currency)}) oshmasligi kerak!`);
+      return false;
+    }
+
+    const amountInWalletCurrency = convertAmount(repayAmount, debt.currency, wallet.currency);
+
+    if (debt.type === 'lent') {
+      // Menga qaytarishmoqda: hamyonga kirim
+      setWallets(prev =>
+        prev.map(w => {
+          if (w.id === walletId) {
+            const newBal = Math.round((w.balance + amountInWalletCurrency + Number.EPSILON) * 100) / 100;
+            return { ...w, balance: newBal };
+          }
+          return w;
+        })
+      );
+
+      const today = new Date().toISOString().split('T')[0];
+      const newTx: Transaction = {
+        id: `tx-repay-${Date.now()}`,
+        walletId: wallet.id,
+        type: 'income',
+        amount: amountInWalletCurrency,
+        currency: wallet.currency,
+        category: 'Qarz qaytarilishi',
+        date: today,
+        note: `Qarz qaytarildi: ${debt.personName}${note ? ` (${note})` : ''}`,
+      };
+      setTransactions(prev => [newTx, ...prev]);
+    } else {
+      // Men qarzni to'layapman: hamyondan chiqim
+      if (wallet.balance < amountInWalletCurrency) {
+        showToast("Tanlangan hamyonda to'lov uchun mablag' yetarli emas!");
+        return false;
+      }
+
+      setWallets(prev =>
+        prev.map(w => {
+          if (w.id === walletId) {
+            const newBal = Math.max(0, Math.round((w.balance - amountInWalletCurrency + Number.EPSILON) * 100) / 100);
+            return { ...w, balance: newBal };
+          }
+          return w;
+        })
+      );
+
+      const today = new Date().toISOString().split('T')[0];
+      const newTx: Transaction = {
+        id: `tx-repay-${Date.now()}`,
+        walletId: wallet.id,
+        type: 'expense',
+        amount: amountInWalletCurrency,
+        currency: wallet.currency,
+        category: 'Qarz to\'lovi',
+        date: today,
+        note: `Qarz to'landi: ${debt.personName}${note ? ` (${note})` : ''}`,
+      };
+      setTransactions(prev => [newTx, ...prev]);
+    }
+
+    const newPaidAmount = Math.round((debt.paidAmount + repayAmount + Number.EPSILON) * 100) / 100;
+    const isNowClosed = newPaidAmount >= debt.amount - 0.001;
+
+    setDebts(prev =>
+      prev.map(d => {
+        if (d.id === debtId) {
+          return {
+            ...d,
+            paidAmount: newPaidAmount,
+            isClosed: isNowClosed,
+          };
+        }
+        return d;
+      })
+    );
+
+    if (isNowClosed) {
+      showToast(`"${debt.personName}" bilan qarz to'liq yopildi! 🎉`);
+    } else {
+      showToast(`"${debt.personName}" qarziga ${formatCurrency(repayAmount, debt.currency)} to'landi!`);
+    }
+    return true;
+  };
+
   return (
     <FinanceContext.Provider
       value={{
@@ -1105,6 +1317,10 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
         updateGoal,
         deleteGoal,
         contributeToGoal,
+        addDebt,
+        updateDebt,
+        deleteDebt,
+        repayDebt,
         isTxModalOpen,
         editingTx,
         defaultTxType,

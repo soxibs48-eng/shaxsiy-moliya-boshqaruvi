@@ -75,6 +75,13 @@ export interface Debt {
   note?: string;
 }
 
+export interface RepayDebtParams {
+  debtId: string;
+  repayAmount: number;
+  walletId: string;
+  note?: string;
+}
+
 export type NavigationTab = 
   | 'dashboard' 
   | 'wallets' 
@@ -171,6 +178,12 @@ export interface FinanceContextType {
   updateGoal: (id: string, goal: Partial<Goal>) => void;
   deleteGoal: (id: string) => void;
   contributeToGoal: (params: ContributeGoalParams) => boolean;
+
+  // Qarzlar CRUD va Qaytarish
+  addDebt: (debt: Omit<Debt, 'id' | 'paidAmount' | 'isClosed'> & { paidAmount?: number }) => boolean;
+  updateDebt: (id: string, debt: Partial<Debt>) => void;
+  deleteDebt: (id: string) => void;
+  repayDebt: (params: RepayDebtParams) => boolean;
 
   // Global Modallar boshqaruvi
   isTxModalOpen: boolean;

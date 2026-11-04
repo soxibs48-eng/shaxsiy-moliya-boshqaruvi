@@ -18,6 +18,7 @@ import {
   Landmark,
   Percent,
   Target,
+  HandCoins,
 } from 'lucide-react';
 import {
   BarChart,
@@ -39,6 +40,7 @@ export const Dashboard: React.FC = () => {
     categories,
     budgets,
     goals,
+    debts,
     baseCurrency,
     exchangeRates,
     ratesMetadata,
@@ -169,6 +171,30 @@ export const Dashboard: React.FC = () => {
   const topGoals = useMemo(() => {
     return goals.slice(0, 2);
   }, [goals]);
+
+  // Faol qarzlar xulosasi
+  const debtStats = useMemo(() => {
+    let pendingLent = 0;
+    let pendingBorrowed = 0;
+    let lentCount = 0;
+    let borrowedCount = 0;
+
+    debts.forEach((d) => {
+      if (!d.isClosed) {
+        const remaining = Math.max(0, d.amount - d.paidAmount);
+        const remInBase = convertAmount(remaining, d.currency, baseCurrency);
+        if (d.type === 'lent') {
+          pendingLent += remInBase;
+          lentCount++;
+        } else {
+          pendingBorrowed += remInBase;
+          borrowedCount++;
+        }
+      }
+    });
+
+    return { pendingLent, pendingBorrowed, lentCount, borrowedCount };
+  }, [debts, convertAmount, baseCurrency]);
 
   // Hamyon turiga mos ikonka
   const renderWalletIcon = (iconName: string, className = 'w-5 h-5') => {
@@ -609,6 +635,33 @@ export const Dashboard: React.FC = () => {
             )}
           </div>
         </div>
+
+        {/* Qarzlar monitoringi qatori */}
+        {(debtStats.lentCount > 0 || debtStats.borrowedCount > 0) && (
+          <div className="mt-4 pt-4 border-t border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
+            <div className="flex items-center gap-3 sm:gap-4 flex-wrap">
+              <span className="font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                <HandCoins className="w-4 h-4 text-emerald-500" />
+                <span>Faol qarzlar nazorati:</span>
+              </span>
+              <span className="text-emerald-600 dark:text-emerald-400 font-semibold font-mono">
+                Menga qaytarishlari kerak: +{formatCurrency(debtStats.pendingLent, baseCurrency, isBalanceHidden)} ({debtStats.lentCount} ta)
+              </span>
+              <span className="text-slate-300 dark:text-slate-700 hidden sm:inline">•</span>
+              <span className="text-rose-600 dark:text-rose-400 font-semibold font-mono">
+                Men qaytarishim kerak: -{formatCurrency(debtStats.pendingBorrowed, baseCurrency, isBalanceHidden)} ({debtStats.borrowedCount} ta)
+              </span>
+            </div>
+
+            <button
+              onClick={() => setActiveTab('debts')}
+              className="text-xs font-bold text-emerald-600 dark:text-emerald-400 hover:text-emerald-500 flex items-center gap-1 transition-colors shrink-0"
+            >
+              <span>Qarzlar daftari</span>
+              <ArrowRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
       </div>
 
       {/* 5. Quyi qism (Oxirgi operatsiyalar va Hamyonlar) */}
