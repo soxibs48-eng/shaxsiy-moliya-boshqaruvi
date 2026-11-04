@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   Wallet as WalletIcon,
   CreditCard,
@@ -29,7 +29,8 @@ import {
 } from 'recharts';
 import { useFinance } from '../context/FinanceContext';
 import { Transaction } from '../types/finance';
-import { formatCurrency, formatDateUz } from '../utils/formatters';
+import { formatCurrency, formatDateUz, formatExchangeRate } from '../utils/formatters';
+import { ExchangeRatesModal } from '../components/wallets/ExchangeRatesModal';
 
 export const Dashboard: React.FC = () => {
   const {
@@ -39,6 +40,8 @@ export const Dashboard: React.FC = () => {
     budgets,
     goals,
     baseCurrency,
+    exchangeRates,
+    ratesMetadata,
     getTotalBalance,
     isBalanceHidden,
     convertAmount,
@@ -48,6 +51,8 @@ export const Dashboard: React.FC = () => {
     getBudgetSpent,
     theme,
   } = useFinance();
+
+  const [isRatesModalOpen, setIsRatesModalOpen] = useState(false);
 
   const totalBalance = getTotalBalance();
 
@@ -269,6 +274,54 @@ export const Dashboard: React.FC = () => {
             <span className="font-bold text-slate-800 dark:text-slate-200">{monthlyStats.savingsRate}%</span>
             <span>daromaddan tejab qolindi</span>
           </p>
+        </div>
+      </div>
+
+      {/* 1.1 Jonli Valyuta Kurslari Lenta Vidjeti */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-4 py-3 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-sm text-xs">
+        <div className="flex items-center gap-2.5 flex-wrap">
+          <span className="relative flex h-2.5 w-2.5 shrink-0">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+            <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
+          </span>
+          <span className="font-extrabold uppercase tracking-wider text-emerald-600 dark:text-emerald-400 text-[11px]">
+            Jonli Kurslar (CBU.uz API)
+          </span>
+          <span className="text-slate-300 dark:text-slate-700 hidden sm:inline">|</span>
+          <div className="flex items-center gap-3 font-mono font-bold text-slate-800 dark:text-slate-200 flex-wrap">
+            <span className="flex items-center gap-1">
+              <span className="text-emerald-500 font-extrabold">$</span>
+              <span>1 USD = {formatExchangeRate(exchangeRates.USD)} UZS</span>
+              {ratesMetadata.diff.USD !== 0 && (
+                <span className={`text-[10px] font-sans ${ratesMetadata.diff.USD > 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
+                  ({ratesMetadata.diff.USD > 0 ? '+' : ''}{ratesMetadata.diff.USD})
+                </span>
+              )}
+            </span>
+            <span className="text-slate-300 dark:text-slate-700">•</span>
+            <span className="flex items-center gap-1">
+              <span className="text-blue-500 font-extrabold">€</span>
+              <span>1 EUR = {formatExchangeRate(exchangeRates.EUR)} UZS</span>
+              {ratesMetadata.diff.EUR !== 0 && (
+                <span className={`text-[10px] font-sans ${ratesMetadata.diff.EUR > 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
+                  ({ratesMetadata.diff.EUR > 0 ? '+' : ''}{ratesMetadata.diff.EUR})
+                </span>
+              )}
+            </span>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 justify-between sm:justify-end text-slate-500 dark:text-slate-400">
+          <span className="text-[11px] font-mono">
+            {ratesMetadata.isAutoRefresh ? 'Har soniyada yangilanmoqda' : "To'xtatilgan"}
+            {ratesMetadata.lastUpdated && ` • ${ratesMetadata.lastUpdated}`}
+          </span>
+          <button
+            onClick={() => setIsRatesModalOpen(true)}
+            className="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 text-[11px] font-semibold transition-colors shrink-0"
+          >
+            Boshqarish
+          </button>
         </div>
       </div>
 
@@ -709,6 +762,12 @@ export const Dashboard: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {/* Valyuta kurslari modali */}
+      <ExchangeRatesModal
+        isOpen={isRatesModalOpen}
+        onClose={() => setIsRatesModalOpen(false)}
+      />
     </div>
   );
 };

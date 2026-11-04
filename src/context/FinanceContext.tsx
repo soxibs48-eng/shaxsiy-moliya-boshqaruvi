@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef, useCallback, ReactNode } from 'react';
 import {
   Currency,
   Wallet,
@@ -10,12 +10,14 @@ import {
   NavigationTab,
   ThemeMode,
   ExchangeRates,
+  RatesMetadata,
   FinanceContextType,
   TransferParams,
   ContributeGoalParams,
   WalletType,
 } from '../types/finance';
-import { formatCurrency } from '../utils/formatters';
+import { formatCurrency, formatExchangeRate } from '../utils/formatters';
+import { getLiveExchangeRates } from '../services/currencyApi';
 
 // Standart valyuta kurslari (1 birlik xorijiy valyutaning UZS dagi qiymati)
 const DEFAULT_RATES: ExchangeRates = {
@@ -414,7 +416,27 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
   // 9. Faol tab
   const [activeTab, setActiveTab] = useState<NavigationTab>('dashboard');
 
-  // 10. Valyuta kurslari (localStorage bilan sinxron)
+  // 10. Toast xabar tizimi
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  const showToast = useCallback((msg: string) => {
+    setToastMessage(msg);
+  }, []);
+
+  const clearToast = useCallback(() => {
+    setToastMessage(null);
+  }, []);
+
+  useEffect(() => {
+    if (toastMessage) {
+      const timer = setTimeout(() => {
+        setToastMessage(null);
+      }, 3500);
+      return () => clearTimeout(timer);
+    }
+  }, [toastMessage]);
+
+  // 11. Valyuta kurslari (localStorage bilan sinxron)
   const [exchangeRates, setExchangeRates] = useState<ExchangeRates>(() => {
     try {
       const saved = localStorage.getItem('sf_exchange_rates');
@@ -430,14 +452,117 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     return DEFAULT_RATES;
   });
 
+  // 11.1 Jonli valyuta metama'lumotlari (Jonli API holati, manba, diff, interval)
+  const [ratesMetadata, setRatesMetadata] = useState<RatesMetadata>(() => {
+    return {
+      source: 'cbu',
+      lastUpdated: new Date().toLocaleTimeString('uz-UZ'),
+      lastSyncTimestamp: Date.now(),
+      status: 'connected',
+      diff: { USD: 0, EUR: 0 },
+      isAutoRefresh: true,
+      refreshInterval: 1000, // 1000ms = Har soniyada yangilanadi!
+      secondsSinceUpdate: 0,
+      tickCount: 0,
+    };
+  });
+
+  const isFetchingRatesRef = useRef<boolean>(false);
+  const lastApiFetchTimeRef = useRef<number>(0);
+
+  const fetchLiveRates = useCallback(async (showToastNotification: boolean = false) => {
+    if (isFetchingRatesRef.current) return;
+    isFetchingRatesRef.current = true;
+
+    try {
+      const live = await getLiveExchangeRates();
+      setExchangeRates({
+        UZS: 1,
+        USD: live.USD,
+        EUR: live.EUR,
+      });
+      setRatesMetadata(prev => ({
+        ...prev,
+        source: live.source,
+        lastUpdated: new Date().toLocaleTimeString('uz-UZ'),
+        lastSyncTimestamp: Date.now(),
+        status: 'connected',
+        diff: live.diff,
+        secondsSinceUpdate: 0,
+      }));
+      lastApiFetchTimeRef.current = Date.now();
+
+      if (showToastNotification) {
+        showToast(`Jonli API yangilandi: $1 = ${formatExchangeRate(live.USD)} UZS (${live.source === 'cbu' ? 'CBU.uz' : 'ER-API'})`);
+      }
+    } catch (error) {
+      console.error('Jonli kurslarni olishda xatolik:', error);
+      setRatesMetadata(prev => ({
+        ...prev,
+        status: 'error',
+      }));
+      if (showToastNotification) {
+        showToast("Valyuta kurslarini yuklashda xatolik yuz berdi");
+      }
+    } finally {
+      isFetchingRatesRef.current = false;
+    }
+  }, [showToast]);
+
   const updateExchangeRates = (rates: { USD: number; EUR: number }) => {
     setExchangeRates({
       UZS: 1,
       USD: rates.USD > 0 ? rates.USD : DEFAULT_RATES.USD,
       EUR: rates.EUR > 0 ? rates.EUR : DEFAULT_RATES.EUR,
     });
+    setRatesMetadata(prev => ({
+      ...prev,
+      source: 'manual',
+      lastUpdated: new Date().toLocaleTimeString('uz-UZ'),
+      lastSyncTimestamp: Date.now(),
+      status: 'connected',
+      secondsSinceUpdate: 0,
+    }));
     showToast("Valyuta kurslari yangilandi!");
   };
+
+  const setIsAutoRefresh = useCallback((enabled: boolean) => {
+    setRatesMetadata(prev => ({ ...prev, isAutoRefresh: enabled }));
+    showToast(enabled ? "Jonli avto-yangilanish yoqildi (Har soniyada)" : "Avto-yangilanish to'xtatildi");
+  }, [showToast]);
+
+  const setRefreshInterval = useCallback((intervalMs: number) => {
+    setRatesMetadata(prev => ({ ...prev, refreshInterval: intervalMs }));
+  }, []);
+
+  // Ilova ochilganda darhol 1 marta tekin API dan kurslarni olish
+  useEffect(() => {
+    fetchLiveRates(false);
+  }, [fetchLiveRates]);
+
+  // Har soniyada (1000ms) uzluksiz monitoring va yangilanish
+  useEffect(() => {
+    if (!ratesMetadata.isAutoRefresh) return;
+
+    const timer = setInterval(() => {
+      const now = Date.now();
+
+      // Har soniyada sekundomer va tick count yangilanadi
+      setRatesMetadata(prev => ({
+        ...prev,
+        tickCount: prev.tickCount + 1,
+        secondsSinceUpdate: Math.floor((now - prev.lastSyncTimestamp) / 1000),
+      }));
+
+      // Har soniyada API ni yangilash (agar oldingi so'rov tugagan bo'lsa)
+      const timeSinceLastFetch = now - lastApiFetchTimeRef.current;
+      if (timeSinceLastFetch >= ratesMetadata.refreshInterval && !isFetchingRatesRef.current) {
+        fetchLiveRates(false);
+      }
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [ratesMetadata.isAutoRefresh, ratesMetadata.refreshInterval, fetchLiveRates]);
 
   useEffect(() => {
     try {
@@ -446,26 +571,6 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
       console.error(e);
     }
   }, [exchangeRates]);
-
-  // 11. Toast xabar tizimi
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
-
-  const showToast = (msg: string) => {
-    setToastMessage(msg);
-  };
-
-  const clearToast = () => {
-    setToastMessage(null);
-  };
-
-  useEffect(() => {
-    if (toastMessage) {
-      const timer = setTimeout(() => {
-        setToastMessage(null);
-      }, 3500);
-      return () => clearTimeout(timer);
-    }
-  }, [toastMessage]);
 
   // localStorage saqlash effektlari
   useEffect(() => {
@@ -970,6 +1075,11 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
         baseCurrency,
         setBaseCurrency,
         exchangeRates,
+        ratesMetadata,
+        updateExchangeRates,
+        fetchLiveRates,
+        setIsAutoRefresh,
+        setRefreshInterval,
         isBalanceHidden,
         toggleBalanceHidden,
         theme,
@@ -983,7 +1093,6 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
         updateWallet,
         deleteWallet,
         transferBetweenWallets,
-        updateExchangeRates,
         addTransaction,
         updateTransaction,
         deleteTransaction,

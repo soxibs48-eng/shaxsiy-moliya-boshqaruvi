@@ -243,3 +243,4 @@ export const ContributeGoalModal: React.FC<ContributeGoalModalProps> = ({
     </div>
   );
 };
+

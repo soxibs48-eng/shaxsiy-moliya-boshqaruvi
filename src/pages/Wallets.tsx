@@ -25,6 +25,8 @@ export const Wallets: React.FC = () => {
   const {
     wallets,
     baseCurrency,
+    exchangeRates,
+    ratesMetadata,
     isBalanceHidden,
     convertAmount,
     getTotalBalance,
@@ -192,10 +194,18 @@ export const Wallets: React.FC = () => {
           {/* Valyuta kurslari tugmasi */}
           <button
             onClick={() => setIsRatesModalOpen(true)}
-            className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs sm:text-sm font-semibold transition-colors"
+            title={`Markaziy Bank API: $1 = ${Math.round(exchangeRates.USD).toLocaleString('uz-UZ')} UZS (${ratesMetadata.isAutoRefresh ? 'Har soniyada yangilanmoqda' : "To'xtatilgan"})`}
+            className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-3.5 py-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs sm:text-sm font-semibold transition-colors"
           >
+            <span className="relative flex h-2 w-2">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+            </span>
             <TrendingUp className="w-4 h-4 text-emerald-500" />
             <span>Valyuta kurslari</span>
+            <span className="hidden md:inline text-[11px] font-mono font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded-md">
+              $1 = {Math.round(exchangeRates.USD).toLocaleString('uz-UZ')}
+            </span>
           </button>
 
           {/* O'tkazma tugmasi */}

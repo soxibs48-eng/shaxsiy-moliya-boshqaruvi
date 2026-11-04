@@ -118,3 +118,15 @@ export function formatDateUz(dateString: string): string {
   return `${kun}-${oy}, ${yil}`;
 }
 
+/**
+ * Valyuta kursini formatlash (kasr qismi bilan)
+ * Masalan: 12850 -> "12 850.00" yoki 11911.71 -> "11 911.71"
+ */
+export function formatExchangeRate(rate: number): string {
+  if (isNaN(rate) || rate === undefined || rate === null) return '0.00';
+  const parts = rate.toFixed(2).split('.');
+  const integerPart = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+  return `${integerPart}.${parts[1]}`;
+}
+
+

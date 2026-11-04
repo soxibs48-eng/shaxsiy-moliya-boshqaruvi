@@ -497,3 +497,4 @@ export const TransactionModal: React.FC = () => {
     </div>
   );
 };
+

@@ -91,6 +91,23 @@ export interface ExchangeRates {
   UZS: number; // 1 UZS in UZS (= 1)
 }
 
+export interface ExchangeRateDiff {
+  USD: number;
+  EUR: number;
+}
+
+export interface RatesMetadata {
+  source: 'cbu' | 'er-api' | 'manual';
+  lastUpdated: string; // Masalan: "19:25:34"
+  lastSyncTimestamp: number;
+  status: 'connected' | 'updating' | 'error';
+  diff: ExchangeRateDiff;
+  isAutoRefresh: boolean;
+  refreshInterval: number; // ms, masalan: 1000 (har soniyada)
+  secondsSinceUpdate: number;
+  tickCount: number;
+}
+
 export interface TransferParams {
   fromWalletId: string;
   toWalletId: string;
@@ -114,7 +131,11 @@ export interface FinanceContextType {
   baseCurrency: Currency;
   setBaseCurrency: (currency: Currency) => void;
   exchangeRates: ExchangeRates;
+  ratesMetadata: RatesMetadata;
   updateExchangeRates: (rates: { USD: number; EUR: number }) => void;
+  fetchLiveRates: (showToastNotification?: boolean) => Promise<void>;
+  setIsAutoRefresh: (enabled: boolean) => void;
+  setRefreshInterval: (intervalMs: number) => void;
   isBalanceHidden: boolean;
   toggleBalanceHidden: () => void;
   theme: ThemeMode;

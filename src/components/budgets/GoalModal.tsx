@@ -318,3 +318,4 @@ export const GoalModal: React.FC<GoalModalProps> = ({
     </div>
   );
 };
+

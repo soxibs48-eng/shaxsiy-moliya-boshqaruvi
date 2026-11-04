@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   Eye,
   EyeOff,
@@ -10,6 +10,7 @@ import {
 import { useFinance } from '../../context/FinanceContext';
 import { Currency, NavigationTab } from '../../types/finance';
 import { formatCurrency, getFormattedToday } from '../../utils/formatters';
+import { ExchangeRatesModal } from '../wallets/ExchangeRatesModal';
 
 const pageTitles: Record<NavigationTab, { title: string; subtitle: string }> = {
   dashboard: {
@@ -43,6 +44,7 @@ export const Header: React.FC = () => {
     activeTab,
     baseCurrency,
     setBaseCurrency,
+    exchangeRates,
     getTotalBalance,
     isBalanceHidden,
     toggleBalanceHidden,
@@ -50,6 +52,8 @@ export const Header: React.FC = () => {
     toggleTheme,
     openTxModal,
   } = useFinance();
+
+  const [isRatesModalOpen, setIsRatesModalOpen] = useState(false);
 
   const currencies: Currency[] = ['UZS', 'USD', 'EUR'];
   const totalBalance = getTotalBalance();
@@ -121,7 +125,36 @@ export const Header: React.FC = () => {
             })}
           </div>
 
-          {/* 3. Dark/Light rejimi toggle */}
+          {/* 3. Jonli Valyuta Kurslari Pilli */}
+          <button
+            onClick={() => setIsRatesModalOpen(true)}
+            className="flex items-center gap-2 px-3 py-1.5 sm:px-3 sm:py-2 rounded-xl bg-emerald-500/5 hover:bg-emerald-500/10 dark:bg-emerald-500/10 dark:hover:bg-emerald-500/15 border border-emerald-500/20 dark:border-emerald-500/30 transition-all group"
+            title="Markaziy Bank Jonli Kurslari (Har soniyada yangilanadi) — Sozlash uchun bosing"
+          >
+            <div className="flex items-center gap-1.5">
+              <span className="relative flex h-2 w-2">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+              </span>
+              <span className="text-[10px] font-extrabold uppercase tracking-wider text-emerald-600 dark:text-emerald-400 hidden xs:inline">
+                Jonli
+              </span>
+            </div>
+
+            <div className="flex items-center gap-2 text-xs font-mono font-bold text-slate-800 dark:text-slate-200">
+              <span className="flex items-center gap-0.5">
+                <span className="text-emerald-600 dark:text-emerald-400 font-extrabold">$</span>
+                <span>{Math.round(exchangeRates.USD).toLocaleString('uz-UZ')}</span>
+              </span>
+              <span className="text-slate-300 dark:text-slate-700 hidden sm:inline">•</span>
+              <span className="items-center gap-0.5 hidden sm:flex">
+                <span className="text-blue-600 dark:text-blue-400 font-extrabold">€</span>
+                <span>{Math.round(exchangeRates.EUR).toLocaleString('uz-UZ')}</span>
+              </span>
+            </div>
+          </button>
+
+          {/* 4. Dark/Light rejimi toggle */}
           <button
             onClick={toggleTheme}
             className="p-2 sm:p-2.5 rounded-xl bg-slate-100 dark:bg-slate-800/90 text-slate-600 dark:text-slate-300 hover:text-emerald-500 dark:hover:text-emerald-400 border border-slate-200/80 dark:border-slate-700/60 transition-colors shadow-sm"
@@ -135,7 +168,7 @@ export const Header: React.FC = () => {
             )}
           </button>
 
-          {/* 4. "+ Yangi operatsiya" yashil tugmasi (Haqiqiy TransactionModal ochadi) */}
+          {/* 5. "+ Yangi operatsiya" yashil tugmasi (Haqiqiy TransactionModal ochadi) */}
           <button
             onClick={() => openTxModal('expense')}
             className="flex items-center gap-1.5 px-3.5 py-2 sm:px-4 sm:py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-semibold text-xs sm:text-sm shadow-md shadow-emerald-600/30 transition-all duration-150"
@@ -147,6 +180,12 @@ export const Header: React.FC = () => {
 
         </div>
       </div>
+
+      {/* Valyuta kurslari modali */}
+      <ExchangeRatesModal
+        isOpen={isRatesModalOpen}
+        onClose={() => setIsRatesModalOpen(false)}
+      />
     </header>
   );
 };
