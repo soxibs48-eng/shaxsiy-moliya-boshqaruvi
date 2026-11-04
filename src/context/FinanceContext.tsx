@@ -12,8 +12,10 @@ import {
   ExchangeRates,
   FinanceContextType,
   TransferParams,
+  ContributeGoalParams,
   WalletType,
 } from '../types/finance';
+import { formatCurrency } from '../utils/formatters';
 
 // Standart valyuta kurslari (1 birlik xorijiy valyutaning UZS dagi qiymati)
 const DEFAULT_RATES: ExchangeRates = {
@@ -167,42 +169,54 @@ const INITIAL_BUDGETS: Budget[] = [
   {
     id: 'b-1',
     category: 'Oziq-ovqat',
-    limitAmount: 3000000,
+    limitAmount: 2500000,
     currency: 'UZS',
   },
   {
     id: 'b-2',
-    category: 'Transport',
-    limitAmount: 1000000,
+    category: 'Kafe va restoran',
+    limitAmount: 800000,
     currency: 'UZS',
   },
   {
     id: 'b-3',
-    category: 'Ko\'ngilochar',
-    limitAmount: 800000,
+    category: 'Transport',
+    limitAmount: 600000,
     currency: 'UZS',
   },
 ];
 
-// Standart namunaviy maqsadlar
+// Standart namunaviy maqsadlar (Kopilka)
 const INITIAL_GOALS: Goal[] = [
   {
     id: 'g-1',
-    title: 'Yangi noutbuk (MacBook M3)',
+    title: 'Yangi MacBook Pro',
     targetAmount: 2000,
-    currentAmount: 1200,
+    currentAmount: 850,
     currency: 'USD',
-    deadline: '2026-12-31',
-    color: '#06b6d4',
+    deadline: '2027-01-15',
+    color: '#3b82f6',
+    icon: 'laptop',
   },
   {
     id: 'g-2',
-    title: 'Favqulodda jamg\'arma',
-    targetAmount: 20000000,
-    currentAmount: 10900000,
+    title: 'Oila bilan sayohat',
+    targetAmount: 25000000,
+    currentAmount: 10000000,
     currency: 'UZS',
     deadline: '2027-06-01',
     color: '#10b981',
+    icon: 'plane',
+  },
+  {
+    id: 'g-3',
+    title: 'Qora kun uchun zaxira (Safety Cushion)',
+    targetAmount: 5000,
+    currentAmount: 2100,
+    currency: 'USD',
+    deadline: '2027-12-31',
+    color: '#8b5cf6',
+    icon: 'shield-check',
   },
 ];
 
@@ -814,6 +828,136 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     showToast('Operatsiya o\'chirildi va balans tiklandi');
   };
 
+  // Byudjetlar CRUD
+  const addBudget = (budgetData: Omit<Budget, 'id'>) => {
+    const existing = budgets.find(b => b.category.toLowerCase() === budgetData.category.toLowerCase());
+    if (existing) {
+      setBudgets(prev => prev.map(b => b.id === existing.id ? { ...b, ...budgetData } : b));
+      showToast(`"${budgetData.category}" uchun byudjet limiti yangilandi!`);
+    } else {
+      const newBudget: Budget = {
+        ...budgetData,
+        id: `b-${Date.now()}`,
+      };
+      setBudgets(prev => [...prev, newBudget]);
+      showToast(`"${newBudget.category}" uchun yangi byudjet belgilandi!`);
+    }
+  };
+
+  const updateBudget = (id: string, updatedFields: Partial<Budget>) => {
+    setBudgets(prev => prev.map(b => b.id === id ? { ...b, ...updatedFields } : b));
+    showToast("Byudjet limiti yangilandi!");
+  };
+
+  const deleteBudget = (id: string) => {
+    const target = budgets.find(b => b.id === id);
+    setBudgets(prev => prev.filter(b => b.id !== id));
+    showToast(`"${target?.category || 'Byudjet'}" limiti o'chirildi`);
+  };
+
+  // Joriy oyda aynan shu kategoriya bo'yicha sarflangan mablag'
+  const getBudgetSpent = (category: string, targetCurrency: Currency): number => {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const currentMonth = `${year}-${month}`;
+
+    return transactions
+      .filter(
+        t =>
+          t.type === 'expense' &&
+          t.category.toLowerCase() === category.toLowerCase() &&
+          t.date.startsWith(currentMonth)
+      )
+      .reduce((sum, t) => sum + convertAmount(t.amount, t.currency, targetCurrency), 0);
+  };
+
+  // Maqsadlar CRUD
+  const addGoal = (goalData: Omit<Goal, 'id'>) => {
+    const newGoal: Goal = {
+      ...goalData,
+      id: `g-${Date.now()}`,
+    };
+    setGoals(prev => [...prev, newGoal]);
+    showToast(`"${newGoal.title}" maqsadi qo'shildi! 🎯`);
+  };
+
+  const updateGoal = (id: string, updatedFields: Partial<Goal>) => {
+    setGoals(prev => prev.map(g => g.id === id ? { ...g, ...updatedFields } : g));
+    showToast("Maqsad ma'lumotlari yangilandi!");
+  };
+
+  const deleteGoal = (id: string) => {
+    const target = goals.find(g => g.id === id);
+    setGoals(prev => prev.filter(g => g.id !== id));
+    showToast(`"${target?.title || 'Maqsad'}" o'chirildi`);
+  };
+
+  // Maqsadga pul ajratish (Kopilkani to'ldirish)
+  const contributeToGoal = (params: ContributeGoalParams): boolean => {
+    const { goalId, walletId, amount, note } = params;
+    const goal = goals.find(g => g.id === goalId);
+    const wallet = wallets.find(w => w.id === walletId);
+
+    if (!goal || !wallet) {
+      showToast("Maqsad yoki hamyon topilmadi!");
+      return false;
+    }
+
+    if (amount <= 0) {
+      showToast("Ajratilayotgan summa 0 dan katta bo'lishi kerak!");
+      return false;
+    }
+
+    if (wallet.balance < amount) {
+      showToast("Hamyonda yetarli mablag' yo'q!");
+      return false;
+    }
+
+    // Maqsad valyutasiga konvertatsiya qilib qo'shish
+    const addedToGoal = convertAmount(amount, wallet.currency, goal.currency);
+
+    // 1. Hamyon balansini kamaytirish
+    setWallets(prev =>
+      prev.map(w => {
+        if (w.id === walletId) {
+          const newBal = Math.max(0, Math.round((w.balance - amount + Number.EPSILON) * 100) / 100);
+          return { ...w, balance: newBal };
+        }
+        return w;
+      })
+    );
+
+    // 2. Maqsad currentAmount qiymatini oshirish
+    setGoals(prev =>
+      prev.map(g => {
+        if (g.id === goalId) {
+          const newCurrent = Math.round((g.currentAmount + addedToGoal + Number.EPSILON) * 100) / 100;
+          return { ...g, currentAmount: newCurrent };
+        }
+        return g;
+      })
+    );
+
+    // 3. Tranzaksiyalar tarixiga yozish
+    const today = new Date().toISOString().split('T')[0];
+    const txNote = note || `Maqsad uchun: ${goal.title} (+${formatCurrency(addedToGoal, goal.currency)})`;
+    const newTx: Transaction = {
+      id: `tx-goal-${Date.now()}`,
+      walletId: wallet.id,
+      type: 'expense',
+      amount: amount,
+      currency: wallet.currency,
+      category: "Jamg'arma / Maqsad",
+      date: today,
+      note: txNote,
+    };
+
+    setTransactions(prev => [newTx, ...prev]);
+    showToast(`"${goal.title}" maqsadiga mablag' muvaffaqiyatli ajratildi! 🎉`);
+    return true;
+  };
+
   return (
     <FinanceContext.Provider
       value={{
@@ -844,6 +988,14 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
         updateTransaction,
         deleteTransaction,
         addCategory,
+        addBudget,
+        updateBudget,
+        deleteBudget,
+        getBudgetSpent,
+        addGoal,
+        updateGoal,
+        deleteGoal,
+        contributeToGoal,
         isTxModalOpen,
         editingTx,
         defaultTxType,

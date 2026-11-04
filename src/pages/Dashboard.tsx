@@ -17,6 +17,7 @@ import {
   PieChart,
   Landmark,
   Percent,
+  Target,
 } from 'lucide-react';
 import {
   BarChart,
@@ -35,6 +36,8 @@ export const Dashboard: React.FC = () => {
     wallets,
     transactions,
     categories,
+    budgets,
+    goals,
     baseCurrency,
     getTotalBalance,
     isBalanceHidden,
@@ -42,6 +45,7 @@ export const Dashboard: React.FC = () => {
     setActiveTab,
     openTxModal,
     openTransferModal,
+    getBudgetSpent,
     theme,
   } = useFinance();
 
@@ -139,6 +143,27 @@ export const Dashboard: React.FC = () => {
 
     return sorted;
   }, [transactions, currentMonthPrefix, categories, convertAmount, baseCurrency, monthlyStats.expense]);
+
+  // Limitga eng yaqinlashgan 2 ta byudjet
+  const topCriticalBudgets = useMemo(() => {
+    return budgets
+      .map((b) => {
+        const spent = getBudgetSpent(b.category, b.currency);
+        const percent = b.limitAmount > 0 ? Math.round((spent / b.limitAmount) * 100) : 0;
+        return {
+          ...b,
+          spent,
+          percent,
+        };
+      })
+      .sort((a, b) => b.percent - a.percent)
+      .slice(0, 2);
+  }, [budgets, getBudgetSpent]);
+
+  // Eng asosiy 2 ta maqsad
+  const topGoals = useMemo(() => {
+    return goals.slice(0, 2);
+  }, [goals]);
 
   // Hamyon turiga mos ikonka
   const renderWalletIcon = (iconName: string, className = 'w-5 h-5') => {
@@ -422,7 +447,118 @@ export const Dashboard: React.FC = () => {
         </div>
       </div>
 
-      {/* 4. Quyi qism (2 ustunli blok: Oxirgi operatsiyalar va Hamyonlar) */}
+      {/* 4. YANGI: Byudjet va Maqsadlar holati (Dashboard Vidjeti) */}
+      <div className="rounded-3xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 p-5 sm:p-6 shadow-sm">
+        <div className="flex items-center justify-between mb-5">
+          <div>
+            <h4 className="font-extrabold text-slate-900 dark:text-white text-base flex items-center gap-2">
+              <Target className="w-5 h-5 text-emerald-500" />
+              <span>Byudjet limitlari va Moliyaviy maqsadlar</span>
+            </h4>
+            <p className="text-xs text-slate-500 dark:text-slate-400">
+              Oylik chegaralar hamda orzular uchun jamg'arma holati
+            </p>
+          </div>
+
+          <button
+            onClick={() => setActiveTab('budgets')}
+            className="text-xs font-bold text-emerald-600 dark:text-emerald-400 hover:text-emerald-500 flex items-center gap-1 transition-colors"
+          >
+            <span>Barchasini ko'rish</span>
+            <ArrowRight className="w-4 h-4" />
+          </button>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+          {/* Chap ustun: Top Byudjet limitlari */}
+          <div className="p-4 sm:p-5 rounded-2xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200/60 dark:border-slate-700/60 space-y-3.5">
+            <div className="flex items-center justify-between text-xs font-bold text-slate-700 dark:text-slate-300 border-b border-slate-200/60 dark:border-slate-700/60 pb-2">
+              <span>Limitga yaqinlashgan xarajatlar</span>
+              <span className="text-[11px] text-slate-400 font-normal">Joriy oy</span>
+            </div>
+
+            {topCriticalBudgets.length === 0 ? (
+              <p className="text-xs text-slate-400 text-center py-2">Byudjet belgilanmagan</p>
+            ) : (
+              topCriticalBudgets.map((b) => {
+                const isOver = b.spent > b.limitAmount;
+                return (
+                  <div key={b.id} className="space-y-1.5">
+                    <div className="flex justify-between items-center text-xs">
+                      <span className="font-bold text-slate-800 dark:text-slate-200">
+                        {b.category}
+                      </span>
+                      <span className="font-mono text-slate-500 dark:text-slate-400">
+                        {formatCurrency(b.spent, b.currency, isBalanceHidden)} / {formatCurrency(b.limitAmount, b.currency, isBalanceHidden)}
+                      </span>
+                    </div>
+
+                    <div className="w-full bg-slate-200 dark:bg-slate-700 h-2 rounded-full overflow-hidden">
+                      <div
+                        className={`h-full rounded-full transition-all ${
+                          isOver ? 'bg-rose-500' : b.percent >= 70 ? 'bg-amber-500' : 'bg-emerald-500'
+                        }`}
+                        style={{ width: `${Math.min(100, b.percent)}%` }}
+                      />
+                    </div>
+
+                    <div className="flex justify-between text-[11px]">
+                      <span className={`font-semibold ${isOver ? 'text-rose-500' : 'text-slate-500 dark:text-slate-400'}`}>
+                        {isOver ? 'Limitdan oshdi!' : `${b.percent}% sarflandi`}
+                      </span>
+                      <span className="text-slate-400">
+                        {isOver ? `+${formatCurrency(b.spent - b.limitAmount, b.currency, isBalanceHidden)}` : `Qoldi: ${formatCurrency(b.limitAmount - b.spent, b.currency, isBalanceHidden)}`}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+
+          {/* O'ng ustun: Asosiy Maqsadlar */}
+          <div className="p-4 sm:p-5 rounded-2xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200/60 dark:border-slate-700/60 space-y-3.5">
+            <div className="flex items-center justify-between text-xs font-bold text-slate-700 dark:text-slate-300 border-b border-slate-200/60 dark:border-slate-700/60 pb-2">
+              <span>Moliyaviy maqsadlar (Kopilka)</span>
+              <span className="text-[11px] text-slate-400 font-normal">{goals.length} ta maqsad</span>
+            </div>
+
+            {topGoals.length === 0 ? (
+              <p className="text-xs text-slate-400 text-center py-2">Maqsadlar kiritilmagan</p>
+            ) : (
+              topGoals.map((g) => {
+                const percent = g.targetAmount > 0 ? Math.min(100, Math.round((g.currentAmount / g.targetAmount) * 100)) : 0;
+                return (
+                  <div key={g.id} className="space-y-1.5">
+                    <div className="flex justify-between items-center text-xs">
+                      <span className="font-bold text-slate-800 dark:text-slate-200 truncate max-w-[180px]">
+                        {g.title}
+                      </span>
+                      <span className="font-mono font-bold text-purple-600 dark:text-purple-400">
+                        {percent}%
+                      </span>
+                    </div>
+
+                    <div className="w-full bg-slate-200 dark:bg-slate-700 h-2 rounded-full overflow-hidden">
+                      <div
+                        className="h-full rounded-full transition-all bg-gradient-to-r from-purple-500 to-indigo-500"
+                        style={{ width: `${percent}%` }}
+                      />
+                    </div>
+
+                    <div className="flex justify-between text-[11px] font-mono text-slate-500 dark:text-slate-400">
+                      <span>{formatCurrency(g.currentAmount, g.currency, isBalanceHidden)}</span>
+                      <span>Maqsad: {formatCurrency(g.targetAmount, g.currency, isBalanceHidden)}</span>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* 5. Quyi qism (Oxirgi operatsiyalar va Hamyonlar) */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Chapda (2 ustun): Oxirgi 6 ta operatsiya */}
         <div className="lg:col-span-2 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 p-5 sm:p-6 shadow-sm">

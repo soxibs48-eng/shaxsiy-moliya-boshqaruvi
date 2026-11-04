@@ -49,6 +49,14 @@ export interface Goal {
   currency: Currency;
   deadline: string; // YYYY-MM-DD
   color: string;
+  icon?: string;
+}
+
+export interface ContributeGoalParams {
+  goalId: string;
+  walletId: string;
+  amount: number;
+  note?: string;
 }
 
 export type DebtType = 'lent' | 'borrowed'; // lent = berilgan qarz, borrowed = olingan qarz
@@ -130,6 +138,18 @@ export interface FinanceContextType {
   deleteTransaction: (id: string) => void;
 
   addCategory: (category: Omit<Category, 'id'>) => void;
+
+  // Byudjetlar CRUD
+  addBudget: (budget: Omit<Budget, 'id'>) => void;
+  updateBudget: (id: string, budget: Partial<Budget>) => void;
+  deleteBudget: (id: string) => void;
+  getBudgetSpent: (category: string, currency: Currency) => number;
+
+  // Maqsadlar CRUD va To'ldirish
+  addGoal: (goal: Omit<Goal, 'id'>) => void;
+  updateGoal: (id: string, goal: Partial<Goal>) => void;
+  deleteGoal: (id: string) => void;
+  contributeToGoal: (params: ContributeGoalParams) => boolean;
 
   // Global Modallar boshqaruvi
   isTxModalOpen: boolean;
