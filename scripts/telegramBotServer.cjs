@@ -3,13 +3,14 @@
  * Token: 9144296715:AAF38YvmuGyhTmggURAei4bfv5sxQp5FmXg
  * 
  * Imkoniyatlar:
- * 1. MOLIYA: Kunlik xarajat va daromadlarni tabiiy tilda hisoblash ("35000 obed", "taksi 15k", "+2000000 oylik")
- * 2. AI: Google Gemini 1.5 Flash integratsiyasi (savollarga aqlli javob, moliyaviy maslahat)
- * 3. MEDIA: Rasmlarni PDF ga aylantirish (Image to PDF via pdf-lib)
- * 4. MEDIA: Ovozli xabarlarni matnga aylantirish (Speech-to-Text via Gemini Multimodal) va ovozli xarajat kiritish
- * 5. MEDIA: Videolardan musiqa/audio ajratib berish (Video to Audio via sendAudio)
- * 6. OBUNA: Kanalga a'zolikni tekshirish tizimi (Channel subscription check via getChatMember)
- * 7. BAZA: Doimiy JSON baza (data/bot_database.json) va Web ilova bilan HTTP API (port 3001)
+ * 1. SHAXSIY PROFIL: Birinchi kirganda Ism va Familiyani so'rash va doimiy shu ism-familiya bilan murojaat qilish
+ * 2. MOLIYA: Kunlik xarajat va daromadlarni tabiiy tilda hisoblash ("35000 obed", "taksi 15k", "+2000000 oylik")
+ * 3. AI: Google Gemini 1.5 Flash integratsiyasi (savollarga aqlli javob, moliyaviy maslahat)
+ * 4. MEDIA: Rasmlarni PDF ga aylantirish (Image to PDF via pdf-lib)
+ * 5. MEDIA: Ovozli xabarlarni matnga aylantirish (Speech-to-Text via Gemini) va ovozli xarajat kiritish
+ * 6. MEDIA: Videolardan musiqa/audio ajratib berish (Video to Audio)
+ * 7. OBUNA: Kanalga a'zolikni tekshirish tizimi (Channel subscription check)
+ * 8. BAZA: Doimiy JSON baza (data/bot_database.json) va Web ilova bilan HTTP API (port 3001)
  */
 
 const fs = require('fs');
@@ -33,13 +34,14 @@ if (!fs.existsSync(DATA_DIR)) {
 // 1. DOIMIY BAZA VA SOZLAMALAR
 // -------------------------------------------------------------
 let db = {
+  users: {}, // chatId -> { fullName, username, registeredAt, updatedAt }
   transactions: [],
   userStates: {},
   settings: {
-    geminiApiKey: '', // Foydalanuvchi kiritishi mumkin bo'lgan Gemini API kaliti
+    geminiApiKey: '',
   },
   subscriptionConfig: {
-    isEnabled: false, // Majburiy obunani yoqish/o'chirish
+    isEnabled: false,
     channelUsername: '@smartfinance_uz',
     channelTitle: 'Smart Finance Rasmiy Kanali',
     channelUrl: 'https://t.me/smartfinance_uz',
@@ -51,6 +53,7 @@ function loadDatabase() {
     if (fs.existsSync(DB_FILE)) {
       const raw = fs.readFileSync(DB_FILE, 'utf-8');
       const parsed = JSON.parse(raw);
+      db.users = parsed.users || {};
       db.transactions = Array.isArray(parsed.transactions) ? parsed.transactions : [];
       db.userStates = parsed.userStates || {};
       db.settings = { ...db.settings, ...(parsed.settings || {}) };
@@ -72,6 +75,11 @@ function saveDatabase() {
 }
 
 loadDatabase();
+
+// Foydalanuvchi ism-familiyasini olish yordamchisi
+function getUserFullName(chatId, fallback = 'Foydalanuvchi') {
+  return db.users?.[chatId]?.fullName || fallback;
+}
 
 // Formatlash yordamchilari
 function formatMoney(num, currency = 'UZS') {
@@ -518,7 +526,6 @@ async function checkChannelSubscription(userId) {
       }
       return false;
     }
-    // Agar bot kanalda admin bo'lmasa, foydalanuvchini bloklamaymiz
     return true;
   } catch (err) {
     console.error('Kanal tekshirishda xatolik:', err.message);
@@ -561,7 +568,6 @@ async function queryGemini(prompt, apiKey) {
   const key = apiKey || db.settings.geminiApiKey || process.env.GEMINI_API_KEY;
 
   if (!key) {
-    // Agar Gemini API kalit kiritilmagan bo'lsa: Aqlli offline moliya maslahatchisi javob beradi
     return getOfflineFinancialAdvice(prompt);
   }
 
@@ -597,9 +603,6 @@ async function queryGemini(prompt, apiKey) {
   return getOfflineFinancialAdvice(prompt);
 }
 
-/**
- * Offline rejimdagi aqlli moliyaviy maslahatlar bazasi
- */
 function getOfflineFinancialAdvice(prompt) {
   const p = prompt.toLowerCase();
 
@@ -659,9 +662,6 @@ Siz botimizga har kuni xarajatlaringizni yozib borayotganingizning o'zi katta yu
 `.trim();
 }
 
-/**
- * Gemini Multimodal Audio (Speech-to-Text)
- */
 async function transcribeVoiceWithGemini(audioBuffer, apiKey) {
   const key = apiKey || db.settings.geminiApiKey || process.env.GEMINI_API_KEY;
   if (!key) return null;
@@ -702,12 +702,8 @@ async function transcribeVoiceWithGemini(audioBuffer, apiKey) {
 }
 
 // -------------------------------------------------------------
-// 7. FAYL VA MEDIA KONVERTORI (IMAGE TO PDF, AUDIO, VOICE)
+// 7. FAYL VA MEDIA KONVERTORI (IMAGE TO PDF)
 // -------------------------------------------------------------
-
-/**
- * Rasmni PDF ga aylantirish (pdf-lib)
- */
 async function convertImageToPdf(imageBuffer) {
   const pdfDoc = await PDFDocument.create();
   let embeddedImage;
@@ -793,7 +789,7 @@ async function handleUpdate(update) {
 
   const chatId = msg.chat.id;
   const userId = msg.from.id;
-  const userName = msg.from.first_name || 'Foydalanuvchi';
+  const rawText = (msg.text || '').trim();
 
   // 1. Majburiy obunani tekshirish
   const isSubscribed = await checkChannelSubscription(userId);
@@ -803,13 +799,70 @@ async function handleUpdate(update) {
   }
 
   // -------------------------------------------------------------
-  // B. MEDIA ISHLOVLARI (RASM, OVOZ, VIDEO)
+  // ISM VA FAMILIYANI SO'RASH VA RO'YXATGA OLISH TIZIMI
+  // -------------------------------------------------------------
+  const user = db.users[chatId];
+  const userState = db.userStates[chatId];
+
+  // A. Agar foydalanuvchi hozir ism-familiyasini kiritayotgan bo'lsa
+  if (userState && userState.step === 'awaiting_full_name') {
+    if (rawText && !rawText.startsWith('/')) {
+      const fullName = rawText.trim();
+      db.users[chatId] = {
+        fullName: fullName,
+        username: msg.from.username || '',
+        registeredAt: new Date().toISOString(),
+      };
+      db.userStates[chatId] = null;
+      saveDatabase();
+
+      console.log(`[Ro'yxatdan o'tdi] ${fullName} (${chatId})`);
+
+      const registeredMsg = `
+🎉 <b>Tanishganimizdan juda xursandmiz, hurmatli ${fullName}!</b>
+
+Sizning profilingiz muvaffaqiyatli saqlandi. Endi barcha kunlik hisob-kitoblar, daromad va xarajatlar shaxsan siz uchun yuritiladi!
+
+⚡ <b>Qanday boshlash kerak? Shunchaki yozing:</b>
+▫️ <code>obed 35000</code> — Oziq-ovqat xarajati
+▫️ <code>taksi 15k</code> — Transport xarajati
+▫️ <code>+2000000 oylik</code> — Maosh daromadi
+▫️ <i>Ovozli xabar</i> yuboring — ovozingizdan xarajatni tushunaman!
+▫️ <i>Rasm yuboring</i> — PDF qilib beraman!
+
+Quyidagi menyu tugmalaridan foydalanishingiz mumkin 👇
+`.trim();
+      await sendTelegram(chatId, registeredMsg, MAIN_REPLY_KEYBOARD);
+      return;
+    }
+  }
+
+  // B. Agar foydalanuvchi hali Ism-familiyasini kiritmagan bo'lsa (birinchi marta /start bosganda)
+  if (!user || !user.fullName) {
+    db.userStates[chatId] = { step: 'awaiting_full_name' };
+    saveDatabase();
+
+    const askNameMsg = `
+👋 <b>Assalomu alaykum!</b>
+<b>Smart Finance — Shaxsiy moliya hisobchi botiga xush kelibsiz!</b>
+
+Sizga shaxsan va hurmat bilan murojaat qilishimiz uchun, iltimos, <b>Ism va Familiyangizni</b> kiriting:
+<i>(Masalan: Sardor Rahimov)</i>
+`.trim();
+    await sendTelegram(chatId, askNameMsg, { remove_keyboard: true });
+    return;
+  }
+
+  const userFullName = getUserFullName(chatId);
+
+  // -------------------------------------------------------------
+  // C. MEDIA ISHLOVLARI (RASM, OVOZ, VIDEO)
   // -------------------------------------------------------------
 
   // 1. RASM (PHOTO) KELGANDA -> PDF GA AYLANTIRISH
   if (msg.photo && msg.photo.length > 0) {
     const highestPhoto = msg.photo[msg.photo.length - 1];
-    await sendTelegram(chatId, "⏳ <b>Rasmingiz qabul qilindi. PDF formatiga o'tkazilmoqda...</b>");
+    await sendTelegram(chatId, `⏳ <b>Hurmatli ${userFullName}, rasmingiz qabul qilindi. PDF formatiga o'tkazilmoqda...</b>`);
 
     try {
       const filePath = await getTelegramFilePath(highestPhoto.file_id);
@@ -823,7 +876,7 @@ async function handleUpdate(update) {
           chatId,
           pdfBuffer,
           filename,
-          "📄 <b>Rasmingiz muvaffaqiyatli PDF formatiga o'tkazildi!</b>\n<i>Smart Finance Media Konvertor</i>"
+          `📄 <b>Hurmatli ${userFullName}, rasmingiz muvaffaqiyatli PDF formatiga o'tkazildi!</b>\n<i>Smart Finance Media Konvertor</i>`
         );
         return;
       }
@@ -836,7 +889,7 @@ async function handleUpdate(update) {
 
   // 2. OVOZLI XABAR (VOICE) KELGANDA -> SPEECH TO TEXT VA MOLIYA HISOBLASH
   if (msg.voice) {
-    await sendTelegram(chatId, "🎙️ <b>Ovozli xabaringiz qabul qilindi. Matnga aylantirilmoqda...</b>");
+    await sendTelegram(chatId, `🎙️ <b>Hurmatli ${userFullName}, ovozli xabaringiz qabul qilindi. Matnga aylantirilmoqda...</b>`);
 
     try {
       const filePath = await getTelegramFilePath(msg.voice.file_id);
@@ -847,7 +900,7 @@ async function handleUpdate(update) {
         if (transcribedText) {
           await sendTelegram(
             chatId,
-            `🎙️ <b>Ovozli xabaringiz matni:</b>\n«<i>${transcribedText}</i>»`
+            `🎙️ <b>Hurmatli ${userFullName}, ovozli xabaringiz matni:</b>\n«<i>${transcribedText}</i>»`
           );
 
           // Ovozdan moliyaviy amallarni tahlil qilish
@@ -876,7 +929,7 @@ async function handleUpdate(update) {
               : INCOME_CATEGORIES[parsed.category]?.icon || '🔺';
 
             const respText = `
-✅ <b>Ovozingiz orqali moliyaviy amal kiritildi!</b>
+✅ <b>Hurmatli ${userFullName}, ovozingiz orqali amal kiritildi!</b>
 
 ${catIcon} <b>Toifa:</b> ${parsed.category}
 💰 <b>Summa:</b> <code>${formatMoney(parsed.amount, parsed.currency)}</code>
@@ -911,7 +964,7 @@ ${catIcon} <b>Toifa:</b> ${parsed.category}
   // 3. VIDEO KELGANDA -> AUDIOGA / MUSIQAGA AYLANTRISH
   if (msg.video || msg.video_note) {
     const videoObj = msg.video || msg.video_note;
-    await sendTelegram(chatId, "🎥 <b>Video qabul qilindi. Audio/Musiqa ajratib olinmoqda...</b>");
+    await sendTelegram(chatId, `🎥 <b>Hurmatli ${userFullName}, video qabul qilindi. Audio/Musiqa ajratib olinmoqda...</b>`);
 
     try {
       const filePath = await getTelegramFilePath(videoObj.file_id);
@@ -936,12 +989,11 @@ ${catIcon} <b>Toifa:</b> ${parsed.category}
   }
 
   // -------------------------------------------------------------
-  // C. MATNLI XABARLAR VA BUYRUQLAR
+  // D. MATNLI XABARLAR VA BUYRUQLAR
   // -------------------------------------------------------------
-  const rawText = (msg.text || '').trim();
   if (!rawText) return;
 
-  console.log(`[Telegram] ${userName} (${chatId}): ${rawText}`);
+  console.log(`[Telegram] ${userFullName} (${chatId}): ${rawText}`);
 
   // 1. /start
   if (rawText.startsWith('/start')) {
@@ -949,7 +1001,7 @@ ${catIcon} <b>Toifa:</b> ${parsed.category}
     saveDatabase();
 
     const welcome = `
-<b>Assalomu alaykum, ${userName}! 👋</b>
+<b>Assalomu alaykum, hurmatli ${userFullName}! 👋</b>
 <b>Smart Finance — Shaxsiy moliya va intellektual yordamchi botiga xush kelibsiz!</b>
 
 Bu bot orqali quyidagi barcha imkoniyatlardan foydalanishingiz mumkin:
@@ -969,17 +1021,46 @@ Bu bot orqali quyidagi barcha imkoniyatlardan foydalanishingiz mumkin:
 ▫️ <b>Ovozli xabar yuboring</b> ➔ Matnga aylantirib beradi!
 ▫️ <b>Video yuboring</b> ➔ Musiqa/Audio qilib ajratib beradi!
 
-🆔 <b>Sizning Chat ID:</b> <code>${chatId}</code>
+👤 <b>Profil:</b> ${userFullName} | ID: <code>${chatId}</code>
 `.trim();
 
     await sendTelegram(chatId, welcome, MAIN_REPLY_KEYBOARD);
     return;
   }
 
-  // 2. /yordam yoki /help
+  // 2. /profil yoki /ism
+  if (rawText.startsWith('/ism') || rawText === '/profil') {
+    const newName = rawText.replace('/ism', '').trim();
+    if (newName) {
+      db.users[chatId] = {
+        ...(db.users[chatId] || {}),
+        fullName: newName,
+        updatedAt: new Date().toISOString(),
+      };
+      saveDatabase();
+      await sendTelegram(chatId, `✅ <b>Hurmatli ${newName}, ism va familiyangiz muvaffaqiyatli yangilandi!</b>`);
+      return;
+    }
+
+    const profileMsg = `
+👤 <b>Sizning profilingiz:</b>
+
+• Ism va Familiya: <b>${userFullName}</b>
+• Telegram Chat ID: <code>${chatId}</code>
+• Username: @${msg.from.username || 'mavjud emas'}
+• Ro'yxatdan o'tilgan: ${user.registeredAt ? user.registeredAt.split('T')[0] : 'Bugun'}
+
+<i>Ism-familiyangizni o'zgartirish uchun:</i>
+<code>/ism Yangi Ism Familiya</code> deb yozing.
+`.trim();
+    await sendTelegram(chatId, profileMsg);
+    return;
+  }
+
+  // 3. /yordam yoki /help
   if (rawText.startsWith('/yordam') || rawText.startsWith('/help')) {
     const helpText = `
-<b>📖 Botning to'liq imkoniyatlari:</b>
+<b>📖 Hurmatli ${userFullName}, botdan foydalanish bo'yicha qo'llanma:</b>
 
 🔹 <b>Moliya kiritish:</b>
 • <code>35000 obed</code>, <code>taksi 15k</code>, <code>dori 85000</code>
@@ -995,18 +1076,19 @@ Bu bot orqali quyidagi barcha imkoniyatlardan foydalanishingiz mumkin:
 • Ovoz yuborsangiz ➔ Matnga aylantiradi
 • Video yuborsangiz ➔ Audio qilib beradi
 
-🔹 <b>Hisobotlar:</b>
+🔹 <b>Hisobotlar va Profil:</b>
 ▫️ /bugun — Kunlik hisobot va kassa
 ▫️ /oy — Oylik to'liq hisobot
 ▫️ /balans — Umumiy jamg'arma
 ▫️ /tarix — Oxirgi 10 ta amal
 ▫️ /bekor — Oxirgi kiritilgan xatoni bekor qilish
+▫️ /profil — Profil ma'lumotlari va ismni o'zgartirish
 `.trim();
     await sendTelegram(chatId, helpText);
     return;
   }
 
-  // 3. AI BUYRUQLARI (/ai yoki "🤖 Smart AI Maslahatchi")
+  // 4. AI BUYRUQLARI (/ai yoki "🤖 Smart AI Maslahatchi")
   if (rawText.startsWith('/ai') || rawText === '🤖 Smart AI Maslahatchi') {
     let query = rawText.replace('/ai', '').trim();
 
@@ -1015,18 +1097,18 @@ Bu bot orqali quyidagi barcha imkoniyatlardan foydalanishingiz mumkin:
       saveDatabase();
       await sendTelegram(
         chatId,
-        `🤖 <b>AI Maslahatchi bilan suhbat:</b>\n\nIstalgan moliyaviy, biznes yoki shaxsiy savolingizni yozing (masalan: <i>"Qanday qilib tejashni boshlasam bo'ladi?"</i> yoki <i>"Biznes ochish uchun nimalar kerak?"</i>):`
+        `🤖 <b>Hurmatli ${userFullName}!</b>\n\nIstalgan moliyaviy, biznes yoki shaxsiy savolingizni yozing (masalan: <i>"Qanday qilib tejashni boshlasam bo'ladi?"</i> yoki <i>"Biznes ochish uchun nimalar kerak?"</i>):`
       );
       return;
     }
 
-    await sendTelegram(chatId, "🧠 <b>AI Maslahatchi tahlil qilmoqda, bir soniya...</b>");
+    await sendTelegram(chatId, `🧠 <b>Hurmatli ${userFullName}, AI Maslahatchi tahlil qilmoqda, bir soniya...</b>`);
     const aiAnswer = await queryGemini(query);
-    await sendTelegram(chatId, `🤖 <b>AI Maslahatchi javobi:</b>\n\n${aiAnswer}`);
+    await sendTelegram(chatId, `🤖 <b>Hurmatli ${userFullName}, AI Maslahatchi javobi:</b>\n\n${aiAnswer}`);
     return;
   }
 
-  // 4. Gemini API Kalitini Sozlash (/set_ai_key)
+  // 5. Gemini API Kalitini Sozlash (/set_ai_key)
   if (rawText.startsWith('/set_ai_key')) {
     const key = rawText.replace('/set_ai_key', '').trim();
     if (!key) {
@@ -1038,11 +1120,11 @@ Bu bot orqali quyidagi barcha imkoniyatlardan foydalanishingiz mumkin:
     }
     db.settings.geminiApiKey = key;
     saveDatabase();
-    await sendTelegram(chatId, `✅ <b>Gemini API kaliti muvaffaqiyatli saqlandi!</b>\nEndi sun'iy intellekt va ovozni matnga aylantirish (Speech-to-Text) to'liq quvvatda ishlaydi! 🚀`);
+    await sendTelegram(chatId, `✅ <b>Hurmatli ${userFullName}, Gemini API kaliti muvaffaqiyatli saqlandi!</b>\nEndi sun'iy intellekt va ovozni matnga aylantirish to'liq quvvatda ishlaydi! 🚀`);
     return;
   }
 
-  // 5. Majburiy Obuna Kanalini Sozlash (/set_channel, /toggle_channel, /channel_status)
+  // 6. Majburiy Obuna Kanalini Sozlash (/set_channel, /toggle_channel, /channel_status)
   if (rawText.startsWith('/set_channel')) {
     const ch = rawText.replace('/set_channel', '').trim();
     if (!ch) {
@@ -1075,10 +1157,10 @@ Bu bot orqali quyidagi barcha imkoniyatlardan foydalanishingiz mumkin:
     return;
   }
 
-  // 6. "🛠️ Media Konvertor" tugmasi
+  // 7. "🛠️ Media Konvertor" tugmasi
   if (rawText === '🛠️ Media Konvertor') {
     const mediaHelp = `
-🛠️ <b>Fayl va Media Konvertori Imkoniyatlari:</b>
+🛠️ <b>Hurmatli ${userFullName}, Media Konvertori Imkoniyatlari:</b>
 
 📄 <b>1. Rasmni PDF ga aylantirish:</b>
 Botga shunchaki bitta yoki bir nechta rasm yuboring — bot ularni darhol sifatli PDF qilib qaytaradi.
@@ -1093,43 +1175,43 @@ Botga istalgan video yuboring — bot uning audio trekini musiqa fayli sifatida 
     return;
   }
 
-  // 7. /bugun yoki "📊 Bugungi hisobot"
+  // 8. /bugun yoki "📊 Bugungi hisobot"
   if (rawText === '/bugun' || rawText === '📊 Bugungi hisobot') {
     await sendTodayReport(chatId);
     return;
   }
 
-  // 8. /oy yoki "📅 Shu oylik hisobot"
+  // 9. /oy yoki "📅 Shu oylik hisobot"
   if (rawText === '/oy' || rawText === '📅 Shu oylik hisobot') {
     await sendMonthReport(chatId);
     return;
   }
 
-  // 9. /balans yoki "💰 Balans va Kassa"
+  // 10. /balans yoki "💰 Balans va Kassa"
   if (rawText === '/balans' || rawText === '💰 Balans va Kassa') {
     await sendBalanceReport(chatId);
     return;
   }
 
-  // 10. /tarix yoki "📋 So'nggi amallar"
+  // 11. /tarix yoki "📋 So'nggi amallar"
   if (rawText === '/tarix' || rawText === '📋 So\'nggi amallar') {
     await sendRecentTransactions(chatId);
     return;
   }
 
-  // 11. /kurs yoki "📈 Valyuta kurslari"
+  // 12. /kurs yoki "📈 Valyuta kurslari"
   if (rawText === '/kurs' || rawText === '📈 Valyuta kurslari') {
     await sendRatesReport(chatId);
     return;
   }
 
-  // 12. /bekor yoki "❌ Oxirgisini bekor qilish"
+  // 13. /bekor yoki "❌ Oxirgisini bekor qilish"
   if (rawText === '/bekor' || rawText === '❌ Oxirgisini bekor qilish') {
     await undoLastTransaction(chatId);
     return;
   }
 
-  // 13. "➕ Chiqim (Xarajat)"
+  // 14. "➕ Chiqim (Xarajat)"
   if (rawText === '➕ Chiqim (Xarajat)') {
     const inlineCats = {
       inline_keyboard: [
@@ -1156,13 +1238,13 @@ Botga istalgan video yuboring — bot uning audio trekini musiqa fayli sifatida 
     };
     await sendTelegram(
       chatId,
-      `<b>Qaysi toifa bo'yicha xarajat qilmoqchisiz?</b>\n\nToifani tanlang yoki to'g'ridan-to'g'ri <code>35000 obed</code> deb yozing:`,
+      `<b>Hurmatli ${userFullName}, qaysi toifa bo'yicha xarajat qilmoqchisiz?</b>\n\nToifani tanlang yoki to'g'ridan-to'g'ri <code>35000 obed</code> deb yozing:`,
       inlineCats
     );
     return;
   }
 
-  // 14. "➕ Kirim (Daromad)"
+  // 15. "➕ Kirim (Daromad)"
   if (rawText === '➕ Kirim (Daromad)') {
     const inlineIncome = {
       inline_keyboard: [
@@ -1181,33 +1263,32 @@ Botga istalgan video yuboring — bot uning audio trekini musiqa fayli sifatida 
     };
     await sendTelegram(
       chatId,
-      `<b>Daromad manbasini tanlang:</b>\n\nYoki to'g'ridan-to'g'ri <code>+1500000 oylik</code> deb yozing:`,
+      `<b>Hurmatli ${userFullName}, daromad manbasini tanlang:</b>\n\nYoki to'g'ridan-to'g'ri <code>+1500000 oylik</code> deb yozing:`,
       inlineIncome
     );
     return;
   }
 
-  // 15. /id
+  // 16. /id
   if (rawText === '/id') {
     await sendTelegram(
       chatId,
-      `🆔 Sizning Chat ID raqamingiz: <code>${chatId}</code>\n\nUshbu raqamni Smart Finance Web ilovasidagi Telegram sozlamalariga kiriting.`
+      `🆔 <b>Hurmatli ${userFullName}</b>, sizning Chat ID raqamingiz: <code>${chatId}</code>\n\nUshbu raqamni Smart Finance Web ilovasidagi Telegram sozlamalariga kiriting.`
     );
     return;
   }
 
-  // 16. FOYDALANUVCHI HOLATI (AWAITING AI QUESTION)
-  const userState = db.userStates[chatId];
+  // 17. FOYDALANUVCHI HOLATI (AWAITING AI QUESTION)
   if (userState && userState.step === 'awaiting_ai_question') {
     db.userStates[chatId] = null;
     saveDatabase();
-    await sendTelegram(chatId, "🧠 <b>AI Maslahatchi tahlil qilmoqda...</b>");
+    await sendTelegram(chatId, `🧠 <b>Hurmatli ${userFullName}, AI Maslahatchi tahlil qilmoqda...</b>`);
     const aiAnswer = await queryGemini(rawText);
-    await sendTelegram(chatId, `🤖 <b>AI Maslahatchi javobi:</b>\n\n${aiAnswer}`);
+    await sendTelegram(chatId, `🤖 <b>Hurmatli ${userFullName}, AI Maslahatchi javobi:</b>\n\n${aiAnswer}`);
     return;
   }
 
-  // 17. TABIIY TILNI TAHLIL QILISH (Moliyaviy operatsiyalar)
+  // 18. TABIIY TILNI TAHLIL QILISH (Moliyaviy operatsiyalar)
   const parsed = parseNaturalLanguage(rawText);
 
   if (userState && (userState.step === 'awaiting_expense_amount' || userState.step === 'awaiting_income_amount')) {
@@ -1224,6 +1305,7 @@ Botga istalgan video yuboring — bot uning audio trekini musiqa fayli sifatida 
     const newTx = {
       id: 'tg_' + Date.now() + '_' + Math.floor(Math.random() * 1000),
       chatId: chatId,
+      userName: userFullName,
       type: parsed.type,
       amount: parsed.amount,
       currency: parsed.currency,
@@ -1244,7 +1326,7 @@ Botga istalgan video yuboring — bot uning audio trekini musiqa fayli sifatida 
       : INCOME_CATEGORIES[parsed.category]?.icon || '🔺';
 
     const respText = `
-${isExp ? '✅ <b>Chiqim (Xarajat) qayd etildi!</b>' : '🎉 <b>Kirim (Daromad) qayd etildi!</b>'}
+${isExp ? `✅ <b>Hurmatli ${userFullName}, chiqim qayd etildi!</b>` : `🎉 <b>Hurmatli ${userFullName}, kirim qayd etildi!</b>`}
 
 ${catIcon} <b>Toifa:</b> ${parsed.category}
 💰 <b>Summa:</b> <code>${formatMoney(parsed.amount, parsed.currency)}</code>
@@ -1273,15 +1355,15 @@ ${catIcon} <b>Toifa:</b> ${parsed.category}
 
   // Agar moliyaviy operatsiya bo'lmasa, AI ga savol sifatida yo'llash
   if (rawText.endsWith('?') || rawText.length > 25) {
-    await sendTelegram(chatId, "🧠 <b>Savolingiz AI Maslahatchiga yo'naltirildi...</b>");
+    await sendTelegram(chatId, `🧠 <b>Hurmatli ${userFullName}, savolingiz AI Maslahatchiga yo'naltirildi...</b>`);
     const aiAnswer = await queryGemini(rawText);
-    await sendTelegram(chatId, `🤖 <b>AI Maslahatchi:</b>\n\n${aiAnswer}`);
+    await sendTelegram(chatId, `🤖 <b>Hurmatli ${userFullName}, AI Maslahatchi:</b>\n\n${aiAnswer}`);
     return;
   }
 
   // Tushunarsiz xabar
   const unknownMsg = `
-Kechirasiz, <b>${userName}</b>, bu xabarni tushunmadim 🤔
+Kechirasiz, <b>hurmatli ${userFullName}</b>, bu xabarni tushunmadim 🤔
 
 Siz quyidagilarni amalga oshirishingiz mumkin:
 ▫️ Xarajat yozish: <code>obed 35000</code>, <code>taksi 15k</code>
@@ -1290,6 +1372,7 @@ Siz quyidagilarni amalga oshirishingiz mumkin:
 ▫️ <b>Rasm yuboring</b> ➔ PDF qilib beraman!
 ▫️ <b>Ovoz yuboring</b> ➔ Matnga aylantiraman!
 ▫️ <b>Video yuboring</b> ➔ Musiqa qilib beraman!
+▫️ Profilni ko'rish: <code>/profil</code>
 `.trim();
   await sendTelegram(chatId, unknownMsg, MAIN_REPLY_KEYBOARD);
 }
@@ -1299,11 +1382,12 @@ Siz quyidagilarni amalga oshirishingiz mumkin:
 // -------------------------------------------------------------
 async function sendTodayReport(chatId) {
   const stats = getTodayStats(chatId);
+  const fullName = getUserFullName(chatId);
 
   if (stats.count === 0) {
     await sendTelegram(
       chatId,
-      `📅 <b>Bugun (${stats.date}) hali hech qanday operatsiya kiritilmagan.</b>\n\nXarajat yozish uchun: masalan <code>35000 tushlik</code> deb yozing yoki ovozli xabar yuboring!`
+      `📅 <b>Hurmatli ${fullName}</b>, bugun (${stats.date}) hali hech qanday operatsiya kiritilmagan.\n\nXarajat yozish uchun: masalan <code>35000 tushlik</code> deb yozing yoki ovozli xabar yuboring!`
     );
     return;
   }
@@ -1315,7 +1399,7 @@ async function sendTodayReport(chatId) {
   });
 
   const msg = `
-<b>📊 Bugungi kunlik hisobot:</b>
+<b>📊 Hurmatli ${fullName}, bugungi kunlik hisobotingiz:</b>
 <i>Sana: ${stats.date}</i>
 <i>Jami operatsiyalar: ${stats.count} ta</i>
 
@@ -1331,9 +1415,10 @@ ${listText}
 
 async function sendMonthReport(chatId) {
   const stats = getMonthStats(chatId);
+  const fullName = getUserFullName(chatId);
 
   if (stats.count === 0) {
-    await sendTelegram(chatId, `📅 <b>Bu oyda hali hech qanday operatsiyalar mavjud emas.</b>`);
+    await sendTelegram(chatId, `📅 <b>Hurmatli ${fullName}</b>, bu oyda hali hech qanday operatsiyalar mavjud emas.`);
     return;
   }
 
@@ -1343,7 +1428,7 @@ async function sendMonthReport(chatId) {
   });
 
   const msg = `
-<b>📅 Shu oylik tahliliy hisobot (${stats.monthPrefix}):</b>
+<b>📅 Hurmatli ${fullName}, shu oylik tahliliy hisobotingiz (${stats.monthPrefix}):</b>
 <i>Jami operatsiyalar soni: ${stats.count} ta</i>
 
 🔺 <b>Jami Daromad:</b> +${formatMoney(stats.income)}
@@ -1361,9 +1446,10 @@ ${topCatsText || "Xarajatlar yo'q"}
 async function sendBalanceReport(chatId) {
   const stats = getAllTimeStats(chatId);
   const today = getTodayStats(chatId);
+  const fullName = getUserFullName(chatId);
 
   const msg = `
-<b>💰 Sizning Moliyaviy Balansingiz:</b>
+<b>💰 Hurmatli ${fullName}, sizning umumiy moliyaviy balansingiz:</b>
 
 📦 <b>Barcha operatsiyalar:</b> ${stats.totalTransactions} ta
 🟢 <b>Jami tushum:</b> +${formatMoney(stats.income)}
@@ -1379,9 +1465,10 @@ async function sendBalanceReport(chatId) {
 
 async function sendRecentTransactions(chatId) {
   const txs = db.transactions.filter((t) => t.chatId === chatId);
+  const fullName = getUserFullName(chatId);
 
   if (txs.length === 0) {
-    await sendTelegram(chatId, "Hozircha hech qanday operatsiyalar mavjud emas.");
+    await sendTelegram(chatId, `Hurmatli <b>${fullName}</b>, hozircha hech qanday operatsiyalar mavjud emas.`);
     return;
   }
 
@@ -1393,7 +1480,7 @@ async function sendRecentTransactions(chatId) {
   });
 
   const msg = `
-<b>📋 So'nggi 10 ta operatsiya:</b>
+<b>📋 Hurmatli ${fullName}, so'nggi 10 ta operatsiyangiz:</b>
 
 ${list}
 <i>Oxirgi kiritilgan amalni bekor qilish uchun /bekor buyrug'ini bosing.</i>
@@ -1407,9 +1494,10 @@ async function undoLastTransaction(chatId) {
   db.transactions.forEach((t, idx) => {
     if (t.chatId === chatId) userTxIndices.push(idx);
   });
+  const fullName = getUserFullName(chatId);
 
   if (userTxIndices.length === 0) {
-    await sendTelegram(chatId, "Bekor qilish uchun hech qanday operatsiya topilmadi.");
+    await sendTelegram(chatId, `Hurmatli <b>${fullName}</b>, bekor qilish uchun hech qanday operatsiya topilmadi.`);
     return;
   }
 
@@ -1419,7 +1507,7 @@ async function undoLastTransaction(chatId) {
 
   const isInc = removed.type === 'income';
   const msg = `
-🗑️ <b>Oxirgi operatsiya bekor qilindi (o'chirildi)!</b>
+🗑️ <b>Hurmatli ${fullName}, oxirgi operatsiya bekor qilindi!</b>
 
 ${isInc ? '🟢 Kirim' : '🔴 Chiqim'}: <b>${formatMoney(removed.amount, removed.currency)}</b>
 Toifa: ${removed.category}
@@ -1434,9 +1522,10 @@ Hisobingiz qayta hisoblandi.
 
 async function sendRatesReport(chatId) {
   const rates = await fetchCbuRates();
+  const fullName = getUserFullName(chatId);
   const msg = `
 <b>📈 Markaziy Bank Rasmiy Valyuta Kurslari:</b>
-<i>Sana: ${rates.date}</i>
+<i>Hurmatli ${fullName}, kurslar: ${rates.date}</i>
 
 💵 <b>1 USD:</b> <code>${rates.usd}</code>
 💶 <b>1 EUR:</b> <code>${rates.eur}</code>
@@ -1469,8 +1558,14 @@ const server = http.createServer((req, res) => {
     if (chatId) {
       list = list.filter((t) => String(t.chatId) === String(chatId));
     }
+    const user = chatId ? db.users[chatId] : null;
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ ok: true, count: list.length, transactions: list }));
+    res.end(JSON.stringify({
+      ok: true,
+      count: list.length,
+      user: user || null,
+      transactions: list,
+    }));
     return;
   }
 
@@ -1479,6 +1574,7 @@ const server = http.createServer((req, res) => {
     res.end(JSON.stringify({
       status: 'ok',
       bot: '@xsobchi_bot',
+      usersCount: Object.keys(db.users).length,
       subscriptionEnabled: db.subscriptionConfig.isEnabled,
       channel: db.subscriptionConfig.channelUsername,
       hasGeminiKey: !!db.settings.geminiApiKey,
@@ -1501,7 +1597,7 @@ server.listen(HTTP_PORT, () => {
 let lastUpdateId = 0;
 
 async function startPolling() {
-  console.log('🤖 @xsobchi_bot Telegram Polling serveri (AI + Media + Obuna) ishga tushdi...');
+  console.log('🤖 @xsobchi_bot Telegram Polling serveri (Shaxsiy Profil + Ism-Familiya) ishga tushdi...');
 
   while (true) {
     try {

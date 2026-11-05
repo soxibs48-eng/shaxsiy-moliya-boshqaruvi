@@ -1,6 +1,16 @@
 {
   "transactions": [],
   "userStates": {
-    "7452174818": null
+    "7452174818": null,
+    "8875931989": null
+  },
+  "settings": {
+    "geminiApiKey": ""
+  },
+  "subscriptionConfig": {
+    "isEnabled": false,
+    "channelUsername": "@smartfinance_uz",
+    "channelTitle": "Smart Finance Rasmiy Kanali",
+    "channelUrl": "https://t.me/smartfinance_uz"
   }
 }
