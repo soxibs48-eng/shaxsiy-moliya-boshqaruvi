@@ -14,6 +14,12 @@ import {
   CheckCircle2,
   RefreshCw,
   PiggyBank,
+  SlidersHorizontal,
+  X,
+  Clock,
+  Layers,
+  ChevronRight,
+  Check,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -30,8 +36,8 @@ import {
   Area,
 } from 'recharts';
 import { useFinance } from '../context/FinanceContext';
-import { formatCurrency } from '../utils/formatters';
-import { exportTransactionsToCSV } from '../utils/csvExport';
+import { formatCurrency, formatDateUz } from '../utils/formatters';
+import { exportTransactionsToCSV, exportCategoryAnalysisToCSV } from '../utils/csvExport';
 
 type DateRangeFilter =
   | 'this_month'
@@ -39,7 +45,8 @@ type DateRangeFilter =
   | 'last_3_months'
   | 'last_6_months'
   | 'year_to_date'
-  | 'all_time';
+  | 'all_time'
+  | 'custom';
 
 interface DateRangeOption {
   key: DateRangeFilter;
@@ -53,6 +60,7 @@ const DATE_RANGE_OPTIONS: DateRangeOption[] = [
   { key: 'last_6_months', label: 'Oxirgi 6 oy' },
   { key: 'year_to_date', label: 'Yil boshi' },
   { key: 'all_time', label: 'Barcha davr' },
+  { key: 'custom', label: 'Ixtiyoriy davr 📅' },
 ];
 
 const CATEGORY_COLORS = [
@@ -67,6 +75,23 @@ const CATEGORY_COLORS = [
   '#6366f1', // indigo
   '#ef4444', // red
   '#64748b', // slate
+];
+
+// 50/30/20 Qoidasi uchun toifalar tasnifi
+const NEEDS_CATEGORIES = [
+  'Oziq-ovqat',
+  'Kommunal to\'lovlar',
+  'Transport',
+  'Uy-ro\'zg\'or',
+  'Sog\'liq va dorilar',
+  'Ta\'lim',
+];
+
+const WANTS_CATEGORIES = [
+  'Kafe va restoran',
+  'Kiyim-kechak',
+  'Dam olish',
+  'Boshqa xarajat',
 ];
 
 export const Analytics: React.FC = () => {
@@ -84,19 +109,33 @@ export const Analytics: React.FC = () => {
     theme,
   } = useFinance();
 
+  // Sana filtri holati
   const [dateRange, setDateRange] = useState<DateRangeFilter>('this_month');
+  const [customStart, setCustomStart] = useState<string>(() => {
+    const d = new Date();
+    d.setMonth(d.getMonth() - 1);
+    return d.toISOString().split('T')[0];
+  });
+  const [customEnd, setCustomEnd] = useState<string>(() => {
+    return new Date().toISOString().split('T')[0];
+  });
+
+  // Modallar va AI holati
   const [isAiRefreshing, setIsAiRefreshing] = useState<boolean>(false);
+  const [aiFilter, setAiFilter] = useState<'all' | 'alert' | 'success' | 'tip'>('all');
   const [showDemoConfirm, setShowDemoConfirm] = useState<boolean>(false);
+  const [showExportModal, setShowExportModal] = useState<boolean>(false);
+  const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
 
   // Tanlangan sana oralig'ining boshlanish va tugash sanalarini hisoblash
   const { startDate, endDate, rangeLabel } = useMemo(() => {
     const now = new Date();
     const currentYear = now.getFullYear();
-    const currentMonth = now.getMonth(); // 0-indexed
+    const currentMonth = now.getMonth();
 
     let start = new Date(currentYear, currentMonth, 1);
     let end = new Date(currentYear, currentMonth + 1, 0);
-    let label = 'Noyabr oyi';
+    let label = 'Joriy oy';
 
     switch (dateRange) {
       case 'this_month':
@@ -129,13 +168,19 @@ export const Analytics: React.FC = () => {
         end = new Date(currentYear + 1, 11, 31);
         label = 'Barcha davrlar';
         break;
+      case 'custom':
+        return {
+          startDate: customStart,
+          endDate: customEnd,
+          rangeLabel: `${customStart} dan ${customEnd} gacha`,
+        };
     }
 
     const startStr = start.toISOString().split('T')[0];
     const endStr = end.toISOString().split('T')[0];
 
     return { startDate: startStr, endDate: endStr, rangeLabel: label };
-  }, [dateRange]);
+  }, [dateRange, customStart, customEnd]);
 
   // Tanlangan sana oralig'idagi operatsiyalarni filtrlash
   const filteredTransactions = useMemo(() => {
@@ -258,7 +303,6 @@ export const Analytics: React.FC = () => {
 
   // 4. Blok 3: Sof Balans va Jamg'arma Dinamikasi (Area / Line chart)
   const cumulativeTrend = useMemo(() => {
-    // Tranzaksiyalarni sanasi bo'yicha saralash
     const sorted = [...filteredTransactions].sort((a, b) =>
       a.date.localeCompare(b.date)
     );
@@ -274,7 +318,6 @@ export const Analytics: React.FC = () => {
         runningSavings -= converted;
       }
 
-      // Har bir sana uchun oxirgi balansni yozish
       trendMap[tx.date] = {
         date: tx.date.slice(5), // MM-DD
         balance: Math.round(runningSavings),
@@ -284,24 +327,78 @@ export const Analytics: React.FC = () => {
     return Object.values(trendMap);
   }, [filteredTransactions, convertAmount, baseCurrency]);
 
-  // 5. Smart AI Maslahatchi Tahlili (AI Financial Advisor)
+  // 5. 50/30/20 QOIDASI TAHLILI (Haqiqiy operatsiyalar kesimida)
+  const rule503020 = useMemo(() => {
+    let needsSum = 0;
+    let wantsSum = 0;
+
+    filteredTransactions.forEach((tx) => {
+      if (tx.type === 'expense') {
+        const val = convertAmount(tx.amount, tx.currency, baseCurrency);
+        if (NEEDS_CATEGORIES.includes(tx.category)) {
+          needsSum += val;
+        } else if (WANTS_CATEGORIES.includes(tx.category)) {
+          wantsSum += val;
+        } else {
+          wantsSum += val; // Default to wants
+        }
+      }
+    });
+
+    const income = summary.totalIncome;
+    const savingsSum = Math.max(0, summary.netSavings);
+
+    // Agar daromad mavjud bo'lsa daromadga nisbatan, aks holda jami xarajatga nisbatan
+    const base = income > 0 ? income : (needsSum + wantsSum);
+
+    const needsPct = base > 0 ? Math.round((needsSum / base) * 100) : 0;
+    const wantsPct = base > 0 ? Math.round((wantsSum / base) * 100) : 0;
+    const savingsPct = base > 0 ? Math.round((savingsSum / base) * 100) : 0;
+
+    let verdict = 'Balanslashgan';
+    let statusText = 'Sizning xarajatlaringiz 50/30/20 qoidasiga ancha yaqin!';
+
+    if (needsPct > 60) {
+      verdict = 'Ehtiyojlar yuqori';
+      statusText = 'Zaruriy ehtiyojlar 60% dan ortiq mablag\'ni olmoqda. Kommunal va uy xarajatlarini optimallashtirish tavsiya etiladi.';
+    } else if (wantsPct > 35) {
+      verdict = 'Xohishlar ko\'p';
+      statusText = 'Ko\'ngilochar va kafe xarajatlari 35% dan oshib ketdi. Ularni biroz jilovlash orqali jamg\'armani oshirishingiz mumkin.';
+    } else if (savingsPct >= 20) {
+      verdict = 'Ajoyib jamg\'arma!';
+      statusText = 'Daromadingizning 20% dan ortig\'i jamg\'arilmoqda. Siz moliyaviy mustaqillik sari to\'g\'ri yo\'ldasiz!';
+    }
+
+    return {
+      needsSum: Math.round(needsSum),
+      wantsSum: Math.round(wantsSum),
+      savingsSum: Math.round(savingsSum),
+      needsPct,
+      wantsPct,
+      savingsPct,
+      verdict,
+      statusText,
+    };
+  }, [filteredTransactions, summary, convertAmount, baseCurrency]);
+
+  // 6. Smart AI Maslahatchi Tahlili (AI Financial Advisor)
   const aiInsights = useMemo(() => {
     const list: {
-      type: 'warning' | 'success' | 'alert' | 'tip';
+      type: 'alert' | 'warning' | 'success' | 'tip';
       title: string;
       message: string;
       badge: string;
     }[] = [];
 
-    // 1. Kategoriya anomaliyasi tahlili
+    // 1. Kategoriya anomaliyasi tahlili (>30%)
     if (categoryExpenses.data.length > 0) {
       const topCat = categoryExpenses.data[0];
       if (topCat.percent >= 30) {
         list.push({
           type: 'warning',
           title: `Xarajatlar nomutanosibligi: ${topCat.name}`,
-          message: `Diqqat: Xarajatlaringizning ${topCat.percent}% qismi (${formatCurrency(topCat.value, baseCurrency)}) aynan "${topCat.name}" toifasiga to'g'ri kelmoqda. Bu ko'rsatkichni me'yorlashtirish orqali oylik jamg'armani sezilarli oshirishingiz mumkin!`,
-          badge: 'Muhim tahlil',
+          message: `Diqqat: Xarajatlaringizning ${topCat.percent}% qismi (${formatCurrency(topCat.value, baseCurrency)}) aynan "${topCat.name}" toifasiga to'g'ri kelmoqda. Bu toifani me'yorlashtirish orqali oylik jamg'armani sezilarli oshirishingiz mumkin!`,
+          badge: 'Nomutanosiblik',
         });
       } else {
         list.push({
@@ -318,14 +415,14 @@ export const Analytics: React.FC = () => {
       list.push({
         type: 'success',
         title: "Mustahkam jamg'arma sur'ati",
-        message: `Ajoyib natija! Tanlangan davrda tushgan jami daromadingizning ${summary.savingsRate}% qismini (${formatCurrency(summary.netSavings, baseCurrency)}) tejab qoldingiz. Moliyaviy xavfsizlik yostig'ingiz tobora mustahkamlanmoqda! 🚀`,
-        badge: 'Zo\'r natija',
+        message: `Ajoyib natija! Tanlangan davrda tushgan jami daromadingizning ${summary.savingsRate}% qismini (${formatCurrency(summary.netSavings, baseCurrency)}) tejab qoldingiz. Moliyaviy xavfsizlik yostig'ingiz mustahkamlanmoqda! 🚀`,
+        badge: "Zo'r natija",
       });
     } else if (summary.savingsRate > 0 && summary.savingsRate < 20) {
       list.push({
         type: 'tip',
         title: "Jamg'arma imkoniyati",
-        message: `Siz bu davrda daromadning ${summary.savingsRate}% qismini tejam qildingiz. Klassik moliyaviy qoidaga ko'ra, har bir daromadning kamida 20% qismini zaxira va investitsiyaga yo'naltirish tavsiya etiladi.`,
+        message: `Siz bu davrda daromadning ${summary.savingsRate}% qismini tejab qoldingiz. Klassik moliyaviy qoidaga ko'ra, har bir daromadning kamida 20% qismini zaxira va investitsiyaga yo'naltirish tavsiya etiladi.`,
         badge: 'Tavsiya',
       });
     } else if (summary.totalExpense > summary.totalIncome) {
@@ -337,18 +434,26 @@ export const Analytics: React.FC = () => {
       });
     }
 
-    // 3. Byudjet xavfi tahlili
+    // 3. Byudjet xavfi tahlili (>=85% yoki limitdan oshgan)
     let highRiskBudgetFound = false;
     budgets.forEach((b) => {
       const spent = getBudgetSpent(b.category, b.currency);
       if (b.limitAmount > 0) {
         const pct = Math.round((spent / b.limitAmount) * 100);
-        if (pct >= 85) {
+        if (pct >= 100) {
           highRiskBudgetFound = true;
           list.push({
             type: 'alert',
+            title: `Byudjet limiti buzildi: ${b.category}`,
+            message: `"${b.category}" toifasida belgilangan oylik limit ${pct}% ga yetdi (${formatCurrency(spent, b.currency)} / ${formatCurrency(b.limitAmount, b.currency)}). Limitdan ${formatCurrency(spent - b.limitAmount, b.currency)} ortiqcha sarflandi!`,
+            badge: `${pct}% (Oshdi)`,
+          });
+        } else if (pct >= 85) {
+          highRiskBudgetFound = true;
+          list.push({
+            type: 'warning',
             title: `Byudjet xavfi: ${b.category}`,
-            message: `"${b.category}" toifasida belgilangan oylik limitning ${pct}% qismi sarflab bo'lindi (${formatCurrency(spent, b.currency)} / ${formatCurrency(b.limitAmount, b.currency)}). Qolgan kunlarda ushbu toifaga sarf-xarajatni cheklang!`,
+            message: `"${b.category}" toifasida oylik limitning ${pct}% qismi sarflab bo'lindi (${formatCurrency(spent, b.currency)} / ${formatCurrency(b.limitAmount, b.currency)}). Ushbu toifada xarajatni to'xtatib turing.`,
             badge: `${pct}% sarflandi`,
           });
         }
@@ -359,36 +464,60 @@ export const Analytics: React.FC = () => {
       list.push({
         type: 'success',
         title: "Byudjet limitlari to'liq nazoratda",
-        message: `Barcha belgilangan ${budgets.length} ta oylik xarajat limitlari xavfsiz chegarada ushlab turilibdi. Oylik reja intizom bilan bajarilmoqda.`,
+        message: `Barcha belgilangan ${budgets.length} ta oylik xarajat limitlari xavfsiz chegarada ushlab turilibdi. Oylik moliyaviy reja intizom bilan bajarilmoqda.`,
         badge: 'Xavfsiz',
       });
     }
 
-    // 4. Qarz majburiyatlari xavfi
-    const activeBorrowed = debts.filter((d) => !d.isClosed && d.type === 'borrowed');
-    if (activeBorrowed.length > 0) {
-      const totalBorrowedLeft = activeBorrowed.reduce(
-        (sum, d) => sum + convertAmount(d.amount - d.paidAmount, d.currency, baseCurrency),
-        0
-      );
-      list.push({
-        type: 'tip',
-        title: "Qarzdorlik majburiyatlarini yopish",
-        message: `Sizda ${activeBorrowed.length} ta to'lanishi kerak bo'lgan faol qarz mavjud (${formatCurrency(totalBorrowedLeft, baseCurrency)}). Moliyaviy erkinlik uchun avval qarz majburiyatlarini to'liq yopishni rejalashtiring.`,
-        badge: 'Majburiyat',
-      });
-    }
+    // 4. Qarz muddati yaqinlashgan yoki o'tib ketgan qarzlar tahlili
+    const now = new Date();
+    debts.forEach((debt) => {
+      if (!debt.isClosed) {
+        const remaining = debt.amount - debt.paidAmount;
+        if (remaining > 0) {
+          const due = new Date(debt.dueDate);
+          const diffDays = Math.ceil((due.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
 
-    // 5. Oltin moliyaviy maslahat (Doimiy qoida)
+          if (diffDays < 0) {
+            list.push({
+              type: 'alert',
+              title: `Muddati o'tgan qarz: ${debt.personName}`,
+              message: `${debt.type === 'borrowed' ? 'Siz olgan' : 'Siz bergan'} ${formatCurrency(remaining, debt.currency)} qarzning muddati (${debt.dueDate}) ${Math.abs(diffDays)} kun avval o'tib ketgan! Zudlik bilan hal qiling.`,
+              badge: "Muddati o'tgan",
+            });
+          } else if (diffDays <= 5) {
+            list.push({
+              type: 'warning',
+              title: `Qarz muddati yaqinlashmoqda: ${debt.personName}`,
+              message: `${debt.personName} ga tegishli ${formatCurrency(remaining, debt.currency)} qarzni qaytarish muddatiga atigi ${diffDays} kun qoldi (${debt.dueDate}).`,
+              badge: `${diffDays} kun qoldi`,
+            });
+          }
+        }
+      }
+    });
+
+    // 5. 50/30/20 Qoidasi AI xulosasi
     list.push({
       type: 'tip',
-      title: "50/30/20 Qoidasini qo'llang",
-      message: "Moliyaviy barqarorlik siri: Daromadning 50% qismini majburiy ehtiyojlarga (oziq-ovqat, kommunal, ijara), 30% qismini shaxsiy xohishlarga (dam olish, kiyim), 20% qismini esa darhol jamg'arma va kelajakka ajrating.",
-      badge: 'Oltin Qoida',
+      title: `50/30/20 Qoidasi: ${rule503020.verdict}`,
+      message: `Haqiqiy ko'rsatkichlaringiz: Ehtiyojlar ${rule503020.needsPct}% (ideal: 50%), Xohishlar ${rule503020.wantsPct}% (ideal: 30%), Jamg'arma ${rule503020.savingsPct}% (ideal: 20%). ${rule503020.statusText}`,
+      badge: '50/30/20 Tahlil',
     });
 
     return list;
-  }, [categoryExpenses, summary, budgets, debts, getBudgetSpent, convertAmount, baseCurrency]);
+  }, [categoryExpenses, summary, budgets, debts, getBudgetSpent, rule503020, baseCurrency]);
+
+  // AI filtrlash
+  const filteredAiInsights = useMemo(() => {
+    if (aiFilter === 'all') return aiInsights;
+    return aiInsights.filter((item) => {
+      if (aiFilter === 'alert') return item.type === 'alert' || item.type === 'warning';
+      if (aiFilter === 'success') return item.type === 'success';
+      if (aiFilter === 'tip') return item.type === 'tip';
+      return true;
+    });
+  }, [aiInsights, aiFilter]);
 
   const handleRefreshAi = () => {
     setIsAiRefreshing(true);
@@ -398,19 +527,49 @@ export const Analytics: React.FC = () => {
     }, 600);
   };
 
-  const handleExportCSV = () => {
-    const success = exportTransactionsToCSV(transactions, wallets);
+  const handleExportFiltered = () => {
+    const success = exportTransactionsToCSV(filteredTransactions, wallets, `filtr_davr_${dateRange}`);
+    setShowExportModal(false);
     if (success) {
-      showToast("Barcha operatsiyalar CSV formatida yuklab olindi! 📥");
+      showToast(`Tanlangan davr (${filteredTransactions.length} ta) CSV formatida yuklandi! 📥`);
     } else {
       showToast("Eksport qilish uchun operatsiyalar topilmadi!");
+    }
+  };
+
+  const handleExportAll = () => {
+    const success = exportTransactionsToCSV(transactions, wallets, 'barcha_operatsiyalar');
+    setShowExportModal(false);
+    if (success) {
+      showToast(`Barcha operatsiyalar (${transactions.length} ta) CSV formatida yuklandi! 📥`);
+    } else {
+      showToast("Eksport qilish uchun operatsiyalar topilmadi!");
+    }
+  };
+
+  const handleExportCategories = () => {
+    const success = exportCategoryAnalysisToCSV(categoryExpenses.data, categoryExpenses.totalExpense, baseCurrency);
+    setShowExportModal(false);
+    if (success) {
+      showToast("Toifalar tahlili hisoboti CSV formatida yuklandi! 📊");
+    } else {
+      showToast("Eksport qilish uchun toifalar topilmadi!");
     }
   };
 
   const handleLoadDemo = () => {
     loadDemoData();
     setShowDemoConfirm(false);
+    showToast("26 ta realistik demo ma'lumotlar yuklandi! 🎉");
   };
+
+  // Tanlangan kategoriya operatsiyalari
+  const selectedCategoryTransactions = useMemo(() => {
+    if (!selectedCategory) return [];
+    return filteredTransactions.filter(
+      (tx) => tx.type === 'expense' && tx.category === selectedCategory
+    );
+  }, [filteredTransactions, selectedCategory]);
 
   const isDark = theme === 'dark';
 
@@ -421,8 +580,8 @@ export const Analytics: React.FC = () => {
       <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-4 bg-white dark:bg-slate-900 p-4 sm:p-5 rounded-3xl border border-slate-200/80 dark:border-slate-800 shadow-sm">
         
         {/* Sana Oralig'i Chipi */}
-        <div>
-          <div className="flex items-center gap-2 mb-2">
+        <div className="space-y-2">
+          <div className="flex items-center gap-2">
             <Calendar className="w-4 h-4 text-emerald-500" />
             <span className="text-xs font-bold uppercase tracking-wider text-slate-400">
               Tahlil davri: {rangeLabel}
@@ -444,15 +603,39 @@ export const Analytics: React.FC = () => {
               </button>
             ))}
           </div>
+
+          {/* Ixtiyoriy sana tanlanganda chiqadigan sana inputlari */}
+          {dateRange === 'custom' && (
+            <div className="flex items-center gap-2 pt-2 animate-fadeIn">
+              <div className="flex items-center gap-1.5 bg-slate-50 dark:bg-slate-800/80 px-2.5 py-1 rounded-xl border border-slate-200 dark:border-slate-700">
+                <span className="text-[11px] text-slate-400 font-semibold">Dan:</span>
+                <input
+                  type="date"
+                  value={customStart}
+                  onChange={(e) => setCustomStart(e.target.value)}
+                  className="bg-transparent text-xs text-slate-800 dark:text-slate-200 focus:outline-none"
+                />
+              </div>
+              <div className="flex items-center gap-1.5 bg-slate-50 dark:bg-slate-800/80 px-2.5 py-1 rounded-xl border border-slate-200 dark:border-slate-700">
+                <span className="text-[11px] text-slate-400 font-semibold">Gacha:</span>
+                <input
+                  type="date"
+                  value={customEnd}
+                  onChange={(e) => setCustomEnd(e.target.value)}
+                  className="bg-transparent text-xs text-slate-800 dark:text-slate-200 focus:outline-none"
+                />
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Eksport va Demo yuklash tugmalari */}
         <div className="flex items-center gap-2.5 flex-wrap">
           {/* CSV Eksport */}
           <button
-            onClick={handleExportCSV}
+            onClick={() => setShowExportModal(true)}
             className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold transition-colors shadow-sm"
-            title="Excel va CSV formatida yuklab olish"
+            title="Excel va CSV formatida yuklab olish variantlari"
           >
             <Download className="w-4 h-4 text-emerald-500" />
             <span>CSV Eksport</span>
@@ -478,7 +661,7 @@ export const Analytics: React.FC = () => {
         <div className="rounded-3xl p-5 bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-sm relative overflow-hidden group hover:border-emerald-500/50 transition-all">
           <div className="flex items-center justify-between mb-2">
             <span className="text-xs font-bold uppercase tracking-wider text-slate-400">
-              Jami Daromad ({rangeLabel})
+              Jami Daromad
             </span>
             <div className="w-9 h-9 rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center justify-center">
               <ArrowDownLeft className="w-4 h-4 stroke-[2.5]" />
@@ -488,7 +671,7 @@ export const Analytics: React.FC = () => {
             +{formatCurrency(summary.totalIncome, baseCurrency, isBalanceHidden)}
           </div>
           <p className="text-[11px] text-slate-500 dark:text-slate-400">
-            Tanlangan davrdagi barcha tushumlar
+            {rangeLabel}dagi barcha tushumlar
           </p>
         </div>
 
@@ -496,7 +679,7 @@ export const Analytics: React.FC = () => {
         <div className="rounded-3xl p-5 bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-sm relative overflow-hidden group hover:border-rose-500/50 transition-all">
           <div className="flex items-center justify-between mb-2">
             <span className="text-xs font-bold uppercase tracking-wider text-slate-400">
-              Jami Xarajat ({rangeLabel})
+              Jami Xarajat
             </span>
             <div className="w-9 h-9 rounded-xl bg-rose-500/10 text-rose-600 dark:text-rose-400 flex items-center justify-center">
               <ArrowUpRight className="w-4 h-4 stroke-[2.5]" />
@@ -506,7 +689,7 @@ export const Analytics: React.FC = () => {
             -{formatCurrency(summary.totalExpense, baseCurrency, isBalanceHidden)}
           </div>
           <p className="text-[11px] text-slate-500 dark:text-slate-400">
-            Barcha toifalar bo'yicha sarflangan
+            {rangeLabel}da sarflangan jami mablag'
           </p>
         </div>
 
@@ -531,7 +714,7 @@ export const Analytics: React.FC = () => {
             {formatCurrency(summary.netSavings, baseCurrency, isBalanceHidden)}
           </div>
           <p className="text-[11px] text-slate-500 dark:text-slate-400">
-            Daromad va xarajat orasidagi sof farq
+            Daromad va xarajat orasidagi farq
           </p>
         </div>
 
@@ -567,7 +750,135 @@ export const Analytics: React.FC = () => {
 
       </div>
 
-      {/* 3. Recharts Grafiklari (2 ustunli katta blok) */}
+      {/* 3. 50/30/20 QOIDASI INTERAKTIV BLOKI (Ehtiyojlar / Xohishlar / Jamg'arma) */}
+      <div className="rounded-3xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 p-5 sm:p-6 shadow-sm">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 dark:border-slate-800 pb-4 mb-5">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-2xl bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 flex items-center justify-center font-bold text-sm">
+              <SlidersHorizontal className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h4 className="font-extrabold text-slate-900 dark:text-white text-base">
+                  50 / 30 / 20 Moliyaviy Balans Modeli
+                </h4>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wider bg-indigo-500/10 text-indigo-600 dark:text-indigo-400">
+                  {rule503020.verdict}
+                </span>
+              </div>
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                Daromadingizning ehtiyojlar, xohishlar va jamg'armaga taqsimlanish tahlili
+              </p>
+            </div>
+          </div>
+          <div className="text-xs font-semibold text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 px-3 py-1.5 rounded-xl self-start sm:self-auto">
+            {rule503020.statusText}
+          </div>
+        </div>
+
+        {/* 3 ta Progress Bar (Ehtiyojlar 50%, Xohishlar 30%, Jamg'arma 20%) */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+          
+          {/* 1. Ehtiyojlar (Needs) */}
+          <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-800">
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-1.5">
+                <span className="w-2.5 h-2.5 rounded-full bg-blue-500" />
+                <span className="text-xs font-bold text-slate-800 dark:text-slate-200">
+                  Majburiy Ehtiyojlar (50%)
+                </span>
+              </div>
+              <span className={`text-xs font-mono font-bold ${rule503020.needsPct > 55 ? 'text-rose-500' : 'text-blue-600'}`}>
+                {rule503020.needsPct}%
+              </span>
+            </div>
+            
+            <div className="w-full bg-slate-200 dark:bg-slate-700 h-2.5 rounded-full overflow-hidden mb-2">
+              <div
+                className={`h-full rounded-full transition-all duration-500 ${
+                  rule503020.needsPct > 55 ? 'bg-rose-500' : 'bg-blue-500'
+                }`}
+                style={{ width: `${Math.min(100, rule503020.needsPct)}%` }}
+              />
+            </div>
+            
+            <div className="flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400 font-mono">
+              <span>Sarf: {formatCurrency(rule503020.needsSum, baseCurrency, isBalanceHidden)}</span>
+              <span>Maqsad: ≤ 50%</span>
+            </div>
+            <p className="text-[10px] text-slate-400 mt-1.5">
+              Oziq-ovqat, kommunal, transport, ta'lim, sog'liq
+            </p>
+          </div>
+
+          {/* 2. Xohishlar (Wants) */}
+          <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-800">
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-1.5">
+                <span className="w-2.5 h-2.5 rounded-full bg-amber-500" />
+                <span className="text-xs font-bold text-slate-800 dark:text-slate-200">
+                  Shaxsiy Xohishlar (30%)
+                </span>
+              </div>
+              <span className={`text-xs font-mono font-bold ${rule503020.wantsPct > 35 ? 'text-rose-500' : 'text-amber-600'}`}>
+                {rule503020.wantsPct}%
+              </span>
+            </div>
+            
+            <div className="w-full bg-slate-200 dark:bg-slate-700 h-2.5 rounded-full overflow-hidden mb-2">
+              <div
+                className={`h-full rounded-full transition-all duration-500 ${
+                  rule503020.wantsPct > 35 ? 'bg-rose-500' : 'bg-amber-500'
+                }`}
+                style={{ width: `${Math.min(100, rule503020.wantsPct)}%` }}
+              />
+            </div>
+            
+            <div className="flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400 font-mono">
+              <span>Sarf: {formatCurrency(rule503020.wantsSum, baseCurrency, isBalanceHidden)}</span>
+              <span>Maqsad: ≤ 30%</span>
+            </div>
+            <p className="text-[10px] text-slate-400 mt-1.5">
+              Kafe/restoran, kiyim-kechak, dam olish, ko'ngilochar
+            </p>
+          </div>
+
+          {/* 3. Jamg'arma (Savings) */}
+          <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-800">
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-1.5">
+                <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
+                <span className="text-xs font-bold text-slate-800 dark:text-slate-200">
+                  Jamg'arma va Zaxira (20%)
+                </span>
+              </div>
+              <span className={`text-xs font-mono font-bold ${rule503020.savingsPct >= 20 ? 'text-emerald-600' : 'text-amber-500'}`}>
+                {rule503020.savingsPct}%
+              </span>
+            </div>
+            
+            <div className="w-full bg-slate-200 dark:bg-slate-700 h-2.5 rounded-full overflow-hidden mb-2">
+              <div
+                className={`h-full rounded-full transition-all duration-500 ${
+                  rule503020.savingsPct >= 20 ? 'bg-emerald-500' : 'bg-amber-500'
+                }`}
+                style={{ width: `${Math.min(100, rule503020.savingsPct)}%` }}
+              />
+            </div>
+            
+            <div className="flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400 font-mono">
+              <span>Tejam: {formatCurrency(rule503020.savingsSum, baseCurrency, isBalanceHidden)}</span>
+              <span>Maqsad: ≥ 20%</span>
+            </div>
+            <p className="text-[10px] text-slate-400 mt-1.5">
+              Kopilka maqsadlari, investitsiya va xavfsizlik yostig'i
+            </p>
+          </div>
+
+        </div>
+      </div>
+
+      {/* 4. Recharts Grafiklari (2 ustunli katta blok) */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         
         {/* BLOK 1: Xarajatlar toifalari bo'yicha Doiraviy Donut Grafik (5 ustun) */}
@@ -579,7 +890,7 @@ export const Analytics: React.FC = () => {
                 <span>Xarajatlar strukturasi</span>
               </h4>
               <p className="text-xs text-slate-500 dark:text-slate-400">
-                Toifalar bo'yicha xarajatlar taqsimoti
+                Toifalar bo'yicha sarf ulushi (bosib ko'ring)
               </p>
             </div>
             <span className="text-xs font-bold font-mono text-slate-700 dark:text-slate-300">
@@ -603,6 +914,8 @@ export const Analytics: React.FC = () => {
                       outerRadius={92}
                       paddingAngle={3}
                       dataKey="value"
+                      onClick={(entry) => setSelectedCategory(entry.name)}
+                      className="cursor-pointer"
                     >
                       {categoryExpenses.data.map((entry, index) => (
                         <Cell key={`cell-${index}`} fill={entry.color} />
@@ -635,19 +948,20 @@ export const Analytics: React.FC = () => {
                 </div>
               </div>
 
-              {/* Toifalar Ro'yxati / Legend */}
-              <div className="space-y-2 mt-4 max-h-52 overflow-y-auto pr-1">
+              {/* Toifalar Ro'yxati / Legend (Bosiladigan) */}
+              <div className="space-y-1.5 mt-4 max-h-52 overflow-y-auto pr-1">
                 {categoryExpenses.data.map((cat) => (
-                  <div
+                  <button
                     key={cat.name}
-                    className="flex items-center justify-between text-xs p-2 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800/60 transition-colors"
+                    onClick={() => setSelectedCategory(cat.name)}
+                    className="w-full flex items-center justify-between text-xs p-2 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800/80 transition-all text-left group"
                   >
                     <div className="flex items-center gap-2 min-w-0">
                       <span
-                        className="w-3 h-3 rounded-full shrink-0"
+                        className="w-3 h-3 rounded-full shrink-0 group-hover:scale-125 transition-transform"
                         style={{ backgroundColor: cat.color }}
                       />
-                      <span className="font-semibold text-slate-800 dark:text-slate-200 truncate">
+                      <span className="font-semibold text-slate-800 dark:text-slate-200 truncate group-hover:text-emerald-500 transition-colors">
                         {cat.name}
                       </span>
                     </div>
@@ -659,8 +973,9 @@ export const Analytics: React.FC = () => {
                       <span className="font-bold text-slate-900 dark:text-white w-10 text-right">
                         {cat.percent}%
                       </span>
+                      <ChevronRight className="w-3.5 h-3.5 text-slate-400 group-hover:text-emerald-500 group-hover:translate-x-0.5 transition-all" />
                     </div>
-                  </div>
+                  </button>
                 ))}
               </div>
             </div>
@@ -758,7 +1073,7 @@ export const Analytics: React.FC = () => {
 
       </div>
 
-      {/* 4. BLOK 3: Sof Balans va Kapital Dinamikasi (Line / Area Chart) */}
+      {/* 5. BLOK 3: Sof Balans va Kapital Dinamikasi (Line / Area Chart) */}
       <div className="rounded-3xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 p-5 sm:p-6 shadow-sm">
         <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3 mb-4">
           <div>
@@ -838,7 +1153,7 @@ export const Analytics: React.FC = () => {
         )}
       </div>
 
-      {/* 5. SMART AI MASLAHATCHI (AI Financial Advisor) */}
+      {/* 6. SMART AI MASLAHATCHI (AI Financial Advisor) */}
       <div className="rounded-3xl bg-gradient-to-br from-slate-900 via-slate-900 to-emerald-950/70 text-white p-6 sm:p-7 border border-emerald-500/30 shadow-xl relative overflow-hidden">
         
         {/* Orqa fon nur effekti */}
@@ -865,19 +1180,58 @@ export const Analytics: React.FC = () => {
             </div>
           </div>
 
-          <button
-            onClick={handleRefreshAi}
-            disabled={isAiRefreshing}
-            className="flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold transition-all border border-slate-700 shrink-0"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${isAiRefreshing ? 'animate-spin' : ''}`} />
-            <span>AI tahlilini yangilash</span>
-          </button>
+          <div className="flex items-center gap-2 flex-wrap">
+            {/* AI Filter tugmalari */}
+            <div className="flex items-center bg-slate-800/90 rounded-xl p-1 border border-slate-700/80">
+              <button
+                onClick={() => setAiFilter('all')}
+                className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-all ${
+                  aiFilter === 'all' ? 'bg-emerald-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                Hammasi ({aiInsights.length})
+              </button>
+              <button
+                onClick={() => setAiFilter('alert')}
+                className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-all ${
+                  aiFilter === 'alert' ? 'bg-rose-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                Xavflar ⚠️
+              </button>
+              <button
+                onClick={() => setAiFilter('success')}
+                className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-all ${
+                  aiFilter === 'success' ? 'bg-emerald-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                Yutuqlar ✅
+              </button>
+              <button
+                onClick={() => setAiFilter('tip')}
+                className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-all ${
+                  aiFilter === 'tip' ? 'bg-sky-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                Tavsiyalar 💡
+              </button>
+            </div>
+
+            <button
+              onClick={handleRefreshAi}
+              disabled={isAiRefreshing}
+              className="flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold transition-all border border-slate-700 shrink-0"
+              title="AI maslahatlarini qayta tahlil qilish"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isAiRefreshing ? 'animate-spin' : ''}`} />
+              <span className="hidden sm:inline">Yangilash</span>
+            </button>
+          </div>
         </div>
 
         {/* AI Tavsiyalar Kartalari Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {aiInsights.map((insight, idx) => (
+          {filteredAiInsights.map((insight, idx) => (
             <div
               key={idx}
               className="p-4 sm:p-5 rounded-2xl bg-slate-800/80 border border-slate-700/80 hover:border-emerald-500/40 transition-all flex flex-col justify-between gap-2.5 group"
@@ -886,20 +1240,20 @@ export const Analytics: React.FC = () => {
                 <div className="flex items-center justify-between gap-2 mb-2">
                   <div className="flex items-center gap-2">
                     {insight.type === 'warning' ? (
-                      <AlertTriangle className="w-4 h-4 text-amber-400" />
+                      <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
                     ) : insight.type === 'alert' ? (
-                      <AlertTriangle className="w-4 h-4 text-rose-400" />
+                      <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
                     ) : insight.type === 'success' ? (
-                      <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                      <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
                     ) : (
-                      <Lightbulb className="w-4 h-4 text-sky-400" />
+                      <Lightbulb className="w-4 h-4 text-sky-400 shrink-0" />
                     )}
                     <h5 className="font-bold text-sm text-white">
                       {insight.title}
                     </h5>
                   </div>
 
-                  <span className="px-2 py-0.5 rounded-md text-[10px] font-extrabold uppercase tracking-wider bg-slate-700 text-slate-300">
+                  <span className="px-2 py-0.5 rounded-md text-[10px] font-extrabold uppercase tracking-wider bg-slate-700 text-slate-300 shrink-0">
                     {insight.badge}
                   </span>
                 </div>
@@ -913,6 +1267,177 @@ export const Analytics: React.FC = () => {
         </div>
 
       </div>
+
+      {/* CSV Eksport Tanlash Modali */}
+      {showExportModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-sm animate-fadeIn">
+          <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 max-w-md w-full border border-slate-200 dark:border-slate-800 shadow-2xl">
+            <div className="flex items-center justify-between pb-3 mb-4 border-b border-slate-100 dark:border-slate-800">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center justify-center">
+                  <Download className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-slate-900 dark:text-white text-base">
+                    Eksport formatini tanlang
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    Microsoft Excel va boshqa ilovalarga mos CSV
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowExportModal(false)}
+                className="w-8 h-8 rounded-xl flex items-center justify-center text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-3 mb-5">
+              {/* Variant 1: Tanlangan davr */}
+              <button
+                onClick={handleExportFiltered}
+                className="w-full p-4 rounded-2xl bg-slate-50 hover:bg-slate-100 dark:bg-slate-800/60 dark:hover:bg-slate-800 border border-slate-200/80 dark:border-slate-700 flex items-center justify-between text-left transition-all group"
+              >
+                <div className="flex items-center gap-3">
+                  <Calendar className="w-5 h-5 text-emerald-500 group-hover:scale-110 transition-transform" />
+                  <div>
+                    <h5 className="font-bold text-xs text-slate-900 dark:text-white">
+                      Tanlangan davr operatsiyalari
+                    </h5>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                      {rangeLabel} ({filteredTransactions.length} ta operatsiya)
+                    </p>
+                  </div>
+                </div>
+                <Download className="w-4 h-4 text-slate-400 group-hover:text-emerald-500 transition-colors" />
+              </button>
+
+              {/* Variant 2: Barcha davr */}
+              <button
+                onClick={handleExportAll}
+                className="w-full p-4 rounded-2xl bg-slate-50 hover:bg-slate-100 dark:bg-slate-800/60 dark:hover:bg-slate-800 border border-slate-200/80 dark:border-slate-700 flex items-center justify-between text-left transition-all group"
+              >
+                <div className="flex items-center gap-3">
+                  <Layers className="w-5 h-5 text-blue-500 group-hover:scale-110 transition-transform" />
+                  <div>
+                    <h5 className="font-bold text-xs text-slate-900 dark:text-white">
+                      Barcha operatsiyalar arxivi
+                    </h5>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                      Tizimdagi barcha {transactions.length} ta operatsiyalar
+                    </p>
+                  </div>
+                </div>
+                <Download className="w-4 h-4 text-slate-400 group-hover:text-blue-500 transition-colors" />
+              </button>
+
+              {/* Variant 3: Toifalar tahlili */}
+              <button
+                onClick={handleExportCategories}
+                className="w-full p-4 rounded-2xl bg-slate-50 hover:bg-slate-100 dark:bg-slate-800/60 dark:hover:bg-slate-800 border border-slate-200/80 dark:border-slate-700 flex items-center justify-between text-left transition-all group"
+              >
+                <div className="flex items-center gap-3">
+                  <PieChartIcon className="w-5 h-5 text-purple-500 group-hover:scale-110 transition-transform" />
+                  <div>
+                    <h5 className="font-bold text-xs text-slate-900 dark:text-white">
+                      Toifalar strukturasi hisoboti
+                    </h5>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                      {categoryExpenses.data.length} ta toifa bo'yicha sarf ulushlari
+                    </p>
+                  </div>
+                </div>
+                <Download className="w-4 h-4 text-slate-400 group-hover:text-purple-500 transition-colors" />
+              </button>
+            </div>
+
+            <div className="flex justify-end">
+              <button
+                type="button"
+                onClick={() => setShowExportModal(false)}
+                className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+              >
+                Yopish
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Tanlangan Kategoriya Operatsiyalari Modali */}
+      {selectedCategory && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-sm animate-fadeIn">
+          <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 max-w-lg w-full border border-slate-200 dark:border-slate-800 shadow-2xl flex flex-col max-h-[85vh]">
+            <div className="flex items-center justify-between pb-3 mb-4 border-b border-slate-100 dark:border-slate-800 shrink-0">
+              <div>
+                <div className="flex items-center gap-2">
+                  <h3 className="font-bold text-slate-900 dark:text-white text-base">
+                    "{selectedCategory}" toifasi xarajatlari
+                  </h3>
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+                    {selectedCategoryTransactions.length} ta
+                  </span>
+                </div>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  {rangeLabel} davridagi barcha tegishli xarajatlar
+                </p>
+              </div>
+              <button
+                onClick={() => setSelectedCategory(null)}
+                className="w-8 h-8 rounded-xl flex items-center justify-center text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Operatsiyalar ro'yxati */}
+            <div className="overflow-y-auto space-y-2.5 flex-1 pr-1">
+              {selectedCategoryTransactions.length === 0 ? (
+                <div className="py-12 text-center text-slate-400 text-xs">
+                  Ushbu toifada operatsiyalar topilmadi
+                </div>
+              ) : (
+                selectedCategoryTransactions.map((tx) => (
+                  <div
+                    key={tx.id}
+                    className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-800 flex items-center justify-between"
+                  >
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold text-xs text-slate-900 dark:text-white">
+                          {tx.note || selectedCategory}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2 mt-0.5 text-[11px] text-slate-400">
+                        <Clock className="w-3 h-3" />
+                        <span>{formatDateUz(tx.date)}</span>
+                      </div>
+                    </div>
+                    <div className="font-mono font-extrabold text-sm text-rose-600 dark:text-rose-400">
+                      -{formatCurrency(tx.amount, tx.currency, isBalanceHidden)}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+
+            <div className="pt-4 border-t border-slate-100 dark:border-slate-800 mt-4 shrink-0 flex items-center justify-between">
+              <span className="text-xs text-slate-500">
+                Jami sarf: <strong className="text-slate-900 dark:text-white font-mono">{formatCurrency(selectedCategoryTransactions.reduce((acc, t) => acc + convertAmount(t.amount, t.currency, baseCurrency), 0), baseCurrency, isBalanceHidden)}</strong>
+              </span>
+              <button
+                type="button"
+                onClick={() => setSelectedCategory(null)}
+                className="px-4 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-200 transition-colors"
+              >
+                Yopish
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Demo ma'lumotlarni tasdiqlash modali */}
       {showDemoConfirm && (
@@ -938,9 +1463,10 @@ export const Analytics: React.FC = () => {
               <button
                 type="button"
                 onClick={handleLoadDemo}
-                className="flex-1 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold shadow-md shadow-purple-600/30"
+                className="flex-1 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold shadow-md shadow-purple-600/30 flex items-center justify-center gap-1.5"
               >
-                Yuklash
+                <Check className="w-4 h-4" />
+                <span>Yuklash</span>
               </button>
             </div>
           </div>

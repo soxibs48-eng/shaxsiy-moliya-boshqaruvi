@@ -30,6 +30,21 @@ async function sendTelegramMessage(chatId, text, replyMarkup = null) {
   }
 }
 
+async function answerCallbackQuery(callbackQueryId, text = '') {
+  try {
+    await fetch(`${BASE_URL}/answerCallbackQuery`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        callback_query_id: callbackQueryId,
+        text: text,
+      }),
+    });
+  } catch (err) {
+    console.error('Callback javobida xatolik:', err.message);
+  }
+}
+
 async function fetchCbuRates() {
   try {
     const res = await fetch('https://cbu.uz/uz/arkhiv-kursov-valyut/json/');
@@ -49,6 +64,38 @@ async function fetchCbuRates() {
 }
 
 async function handleUpdate(update) {
+  // 1. Inline tugma bosilganda (callback_query)
+  if (update.callback_query) {
+    const cb = update.callback_query;
+    const chatId = cb.message?.chat?.id;
+    const data = cb.data;
+
+    await answerCallbackQuery(cb.id);
+
+    if (!chatId) return;
+
+    if (data === 'rates') {
+      const rates = await fetchCbuRates();
+      const ratesMsg = `
+<b>📈 Markaziy Bank Rasmiy Valyuta Kurslari:</b>
+<i>Sana: ${rates.date}</i>
+
+💵 <b>1 USD:</b> <code>${rates.usd}</code>
+💶 <b>1 EUR:</b> <code>${rates.eur}</code>
+🇷🇺 <b>1 RUB:</b> <code>${rates.rub}</code>
+
+<i>Har 1 soniyada Smart Finance ilovasi bilan sinxronlanadi.</i>`.trim();
+      await sendTelegramMessage(chatId, ratesMsg);
+    } else if (data === 'my_id') {
+      await sendTelegramMessage(
+        chatId,
+        `🆔 Sizning Chat ID raqamingiz: <code>${chatId}</code>\n\nUshbu raqamni Smart Finance ilovasidagi Telegram sozlamalariga kiriting.`
+      );
+    }
+    return;
+  }
+
+  // 2. Oddiy matnli xabarlar
   const msg = update.message;
   if (!msg || !msg.text) return;
 
@@ -105,6 +152,11 @@ Web-ilovaga ushbu Chat ID ni kiritib, har bitta yangi operatsiya, hamyon o'tkazm
       chatId,
       `🆔 Sizning Chat ID raqamingiz: <code>${chatId}</code>\n\nUshbu raqamni Smart Finance ilovasidagi Telegram sozlamalariga kiriting.`
     );
+  } else if (text.startsWith('/yordam')) {
+    await sendTelegramMessage(
+      chatId,
+      `<b>Smart Finance Bot qo'llanmasi:</b>\n\n1. Web-ilovani oching: http://127.0.0.1:3000/\n2. Yuqori o'ng burchakdagi Telegram belgisini bosing.\n3. Chat ID ga <code>${chatId}</code> ni kiriting va 'Ulash'ni bosing.\n\nShundan so'ng barcha daromad, xarajat va transferlar botingizga yuboriladi! 💰`
+    );
   } else {
     await sendTelegramMessage(
       chatId,
@@ -136,4 +188,3 @@ async function startPolling() {
 }
 
 startPolling();
-
