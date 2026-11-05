@@ -3,14 +3,18 @@
  * Token: 9144296715:AAF38YvmuGyhTmggURAei4bfv5sxQp5FmXg
  * 
  * Imkoniyatlar:
- * 1. SHAXSIY PROFIL: Birinchi kirganda Ism va Familiyani so'rash va doimiy shu ism-familiya bilan murojaat qilish
- * 2. MOLIYA: Kunlik xarajat va daromadlarni tabiiy tilda hisoblash ("35000 obed", "taksi 15k", "+2000000 oylik")
- * 3. AI: Google Gemini 1.5 Flash integratsiyasi (savollarga aqlli javob, moliyaviy maslahat)
- * 4. MEDIA: Rasmlarni PDF ga aylantirish (Image to PDF via pdf-lib)
- * 5. MEDIA: Ovozli xabarlarni matnga aylantirish (Speech-to-Text via Gemini) va ovozli xarajat kiritish
- * 6. MEDIA: Videolardan musiqa/audio ajratib berish (Video to Audio)
- * 7. OBUNA: Kanalga a'zolikni tekshirish tizimi (Channel subscription check)
- * 8. BAZA: Doimiy JSON baza (data/bot_database.json) va Web ilova bilan HTTP API (port 3001)
+ * 1. ADMIN PANEL: /admin va /panel orqali boshqaruv markazi
+ * 2. STATISTIKA: /stats orqali foydalanuvchilar soni, kunlik faollik, aylanma va operatsiyalar tahlili
+ * 3. XABAR TARQATISH (BROADCASTING): /broadcast orqali barcha a'zolarga xabar va e'lonlar yuborish
+ * 4. FOYDALANUVCHILAR EKSPORTI: /users orqali foydalanuvchilar ro'yxatini Excel/CSV formatida yuklash
+ * 5. SHAXSIY PROFIL: Birinchi kirganda Ism va Familiyani so'rash va doimiy shu ism-familiya bilan murojaat qilish
+ * 6. MOLIYA: Kunlik xarajat va daromadlarni tabiiy tilda hisoblash ("35000 obed", "taksi 15k", "+2000000 oylik")
+ * 7. AI: Google Gemini 1.5 Flash integratsiyasi (savollarga aqlli javob, moliyaviy maslahat)
+ * 8. MEDIA: Rasmlarni PDF ga aylantirish (Image to PDF via pdf-lib)
+ * 9. MEDIA: Ovozli xabarlarni matnga aylantirish (Speech-to-Text via Gemini) va ovozli xarajat kiritish
+ * 10. MEDIA: Videolardan musiqa/audio ajratib berish (Video to Audio)
+ * 11. OBUNA: Kanalga a'zolikni tekshirish tizimi (Channel subscription check)
+ * 12. BAZA: Doimiy JSON baza (data/bot_database.json) va Web ilova bilan HTTP API (port 3001)
  */
 
 const fs = require('fs');
@@ -25,6 +29,9 @@ const DATA_DIR = path.join(__dirname, '..', 'data');
 const DB_FILE = path.join(DATA_DIR, 'bot_database.json');
 const HTTP_PORT = 3001;
 
+// Adminlar ro'yxati (Birlamchi adminlar)
+const DEFAULT_ADMIN_IDS = ['7452174818', '8875931989'];
+
 // Ma'lumotlar papkasini yaratish
 if (!fs.existsSync(DATA_DIR)) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -35,10 +42,12 @@ if (!fs.existsSync(DATA_DIR)) {
 // -------------------------------------------------------------
 let db = {
   users: {}, // chatId -> { fullName, username, registeredAt, updatedAt }
+  dailyActivity: {}, // date (YYYY-MM-DD) -> [chatId1, chatId2, ...]
   transactions: [],
   userStates: {},
   settings: {
     geminiApiKey: '',
+    adminChatIds: [],
   },
   subscriptionConfig: {
     isEnabled: false,
@@ -54,6 +63,7 @@ function loadDatabase() {
       const raw = fs.readFileSync(DB_FILE, 'utf-8');
       const parsed = JSON.parse(raw);
       db.users = parsed.users || {};
+      db.dailyActivity = parsed.dailyActivity || {};
       db.transactions = Array.isArray(parsed.transactions) ? parsed.transactions : [];
       db.userStates = parsed.userStates || {};
       db.settings = { ...db.settings, ...(parsed.settings || {}) };
@@ -75,6 +85,25 @@ function saveDatabase() {
 }
 
 loadDatabase();
+
+// Adminlikni tekshirish
+function isAdmin(chatId) {
+  const idStr = String(chatId);
+  const extraAdmins = (db.settings?.adminChatIds || []).map(String);
+  return DEFAULT_ADMIN_IDS.includes(idStr) || extraAdmins.includes(idStr);
+}
+
+// Foydalanuvchi faolligini qayd etish
+function recordUserActivity(chatId) {
+  const today = getTodayStr();
+  if (!db.dailyActivity) db.dailyActivity = {};
+  if (!Array.isArray(db.dailyActivity[today])) db.dailyActivity[today] = [];
+  const idStr = String(chatId);
+  if (!db.dailyActivity[today].includes(idStr)) {
+    db.dailyActivity[today].push(idStr);
+    saveDatabase();
+  }
+}
 
 // Foydalanuvchi ism-familiyasini olish yordamchisi
 function getUserFullName(chatId, fallback = 'Foydalanuvchi') {
@@ -296,7 +325,7 @@ function parseNaturalLanguage(rawText) {
 }
 
 // -------------------------------------------------------------
-// 3. STATISTIKALAR
+// 3. STATISTIKALAR VA ADMIN METRIKALARI
 // -------------------------------------------------------------
 function getTodayStats(chatId) {
   const today = getTodayStr();
@@ -376,6 +405,113 @@ function getAllTimeStats(chatId) {
   };
 }
 
+/**
+ * ADMIN UCHUN UMUMIY GLOBAL STATISTIKA
+ */
+function getAdminGlobalStats() {
+  const today = getTodayStr();
+
+  // Barcha foydalanuvchilar ID lari
+  const allUserIds = new Set([
+    ...Object.keys(db.users || {}),
+    ...db.transactions.map((t) => String(t.chatId)),
+  ]);
+  const totalUsers = allUserIds.size;
+
+  // Bugun qo'shilganlar
+  let todayNewUsers = 0;
+  Object.values(db.users || {}).forEach((u) => {
+    if (u.registeredAt && u.registeredAt.startsWith(today)) {
+      todayNewUsers++;
+    }
+  });
+
+  // Bugungi faol foydalanuvchilar soni (DAU)
+  const todayActiveUsers = (db.dailyActivity?.[today] || []).length;
+
+  // Tranzaksiyalar
+  const totalTransactions = db.transactions.length;
+  const todayTransactions = db.transactions.filter((t) => t.date === today).length;
+
+  let totalIncome = 0;
+  let totalExpense = 0;
+  let todayIncome = 0;
+  let todayExpense = 0;
+
+  db.transactions.forEach((t) => {
+    if (t.type === 'income') {
+      totalIncome += t.amount;
+      if (t.date === today) todayIncome += t.amount;
+    } else if (t.type === 'expense') {
+      totalExpense += t.amount;
+      if (t.date === today) todayExpense += t.amount;
+    }
+  });
+
+  return {
+    today,
+    totalUsers,
+    todayNewUsers,
+    todayActiveUsers,
+    totalTransactions,
+    todayTransactions,
+    totalIncome,
+    totalExpense,
+    totalTurnover: totalIncome + totalExpense,
+    todayIncome,
+    todayExpense,
+  };
+}
+
+/**
+ * Foydalanuvchilar ro'yxatini CSV formatida yaratish
+ */
+function generateUsersCSV() {
+  const users = Object.entries(db.users || {});
+  const headers = ['Chat ID', 'Ism va Familiya', 'Username', "Ro'yxatdan o'tgan sana"];
+  const rows = users.map(([cId, u]) => [
+    cId,
+    u.fullName || '-',
+    u.username ? `@${u.username}` : '-',
+    u.registeredAt ? u.registeredAt.split('T')[0] : '-',
+  ]);
+
+  const csv = '\uFEFF' + [headers.join(';'), ...rows.map((r) => r.map((c) => `"${c}"`).join(';'))].join('\r\n');
+  return Buffer.from(csv, 'utf-8');
+}
+
+/**
+ * XABAR TARQATISH (BROADCASTING)
+ */
+async function broadcastMessage(text) {
+  const allUserIds = Array.from(
+    new Set([
+      ...Object.keys(db.users || {}),
+      ...db.transactions.map((t) => String(t.chatId)),
+    ])
+  );
+
+  let sentCount = 0;
+  let failCount = 0;
+
+  for (const targetChatId of allUserIds) {
+    try {
+      await sendTelegram(targetChatId, text);
+      sentCount++;
+      // Telegram 429 flood control cheklovidan himoyalanish uchun 40ms tanaffus
+      await new Promise((r) => setTimeout(r, 40));
+    } catch {
+      failCount++;
+    }
+  }
+
+  return {
+    total: allUserIds.length,
+    sentCount,
+    failCount,
+  };
+}
+
 // -------------------------------------------------------------
 // 4. TELEGRAM API ALOQA VA FAYL YUBORISH
 // -------------------------------------------------------------
@@ -389,6 +525,23 @@ const MAIN_REPLY_KEYBOARD = {
   ],
   resize_keyboard: true,
   is_persistent: true,
+};
+
+const ADMIN_PANEL_KEYBOARD = {
+  inline_keyboard: [
+    [
+      { text: '📊 Umumiy Statistika (/stats)', callback_data: 'admin_stats' },
+      { text: '📢 Xabar tarqatish (/broadcast)', callback_data: 'admin_broadcast_prompt' },
+    ],
+    [
+      { text: '👥 Foydalanuvchilar CSV (/users)', callback_data: 'admin_users_csv' },
+      { text: '📢 Kanal obunasi holati', callback_data: 'admin_channel_info' },
+    ],
+    [
+      { text: '📈 Valyuta kurslari', callback_data: 'cmd_rates' },
+      { text: 'ℹ️ Admin yordam', callback_data: 'admin_help' },
+    ],
+  ],
 };
 
 async function sendTelegram(chatId, text, replyMarkup = MAIN_REPLY_KEYBOARD) {
@@ -449,13 +602,13 @@ async function downloadTelegramFileBuffer(filePath) {
   return Buffer.from(arrayBuffer);
 }
 
-async function sendDocumentToTelegram(chatId, buffer, filename, caption = '') {
+async function sendDocumentToTelegram(chatId, buffer, filename, caption = '', mimeType = 'application/pdf') {
   try {
     const formData = new FormData();
     formData.append('chat_id', String(chatId));
     formData.append('caption', caption);
     formData.append('parse_mode', 'HTML');
-    const blob = new Blob([buffer], { type: 'application/pdf' });
+    const blob = new Blob([buffer], { type: mimeType });
     formData.append('document', blob, filename);
 
     const res = await fetch(`${BASE_URL}/sendDocument`, {
@@ -744,6 +897,53 @@ async function handleUpdate(update) {
     await answerCallbackQuery(cb.id);
     if (!chatId) return;
 
+    recordUserActivity(chatId);
+
+    // ADMIN CALLBACKLARI
+    if (data === 'admin_stats') {
+      if (!isAdmin(chatId)) {
+        await sendTelegram(chatId, "⛔ Bu bo'lim faqat bot adminlari uchun.");
+        return;
+      }
+      await sendAdminStats(chatId);
+      return;
+    }
+
+    if (data === 'admin_broadcast_prompt') {
+      if (!isAdmin(chatId)) {
+        await sendTelegram(chatId, "⛔ Bu bo'lim faqat bot adminlari uchun.");
+        return;
+      }
+      db.userStates[chatId] = { step: 'awaiting_broadcast_text' };
+      saveDatabase();
+      await sendTelegram(
+        chatId,
+        `📢 <b>Xabar tarqatish (Broadcasting) rejimi:</b>\n\nBarcha bot foydalanuvchilariga yuboriladigan xabar matnini kiriting:\n<i>(Bekor qilish uchun /cancel deb yozing)</i>`
+      );
+      return;
+    }
+
+    if (data === 'admin_users_csv') {
+      if (!isAdmin(chatId)) {
+        await sendTelegram(chatId, "⛔ Bu bo'lim faqat bot adminlari uchun.");
+        return;
+      }
+      await sendAdminUsersList(chatId);
+      return;
+    }
+
+    if (data === 'admin_channel_info') {
+      if (!isAdmin(chatId)) return;
+      await sendChannelStatus(chatId);
+      return;
+    }
+
+    if (data === 'admin_help') {
+      if (!isAdmin(chatId)) return;
+      await sendAdminHelp(chatId);
+      return;
+    }
+
     // Majburiy obunani tekshirish callback'i
     if (data === 'check_sub') {
       const isSub = await checkChannelSubscription(userId);
@@ -791,11 +991,16 @@ async function handleUpdate(update) {
   const userId = msg.from.id;
   const rawText = (msg.text || '').trim();
 
-  // 1. Majburiy obunani tekshirish
-  const isSubscribed = await checkChannelSubscription(userId);
-  if (!isSubscribed) {
-    await sendSubscriptionPrompt(chatId);
-    return;
+  // Foydalanuvchi faolligini qayd qilish
+  recordUserActivity(chatId);
+
+  // 1. Majburiy obunani tekshirish (Admin bo'lmasa)
+  if (!isAdmin(chatId)) {
+    const isSubscribed = await checkChannelSubscription(userId);
+    if (!isSubscribed) {
+      await sendSubscriptionPrompt(chatId);
+      return;
+    }
   }
 
   // -------------------------------------------------------------
@@ -804,7 +1009,34 @@ async function handleUpdate(update) {
   const user = db.users[chatId];
   const userState = db.userStates[chatId];
 
-  // A. Agar foydalanuvchi hozir ism-familiyasini kiritayotgan bo'lsa
+  // A. Agar admin xabar tarqatayotgan bo'lsa
+  if (userState && userState.step === 'awaiting_broadcast_text' && isAdmin(chatId)) {
+    if (rawText === '/cancel' || rawText === 'Bekor qilish') {
+      db.userStates[chatId] = null;
+      saveDatabase();
+      await sendTelegram(chatId, "❌ Xabar tarqatish bekor qilindi.", MAIN_REPLY_KEYBOARD);
+      return;
+    }
+
+    db.userStates[chatId] = null;
+    saveDatabase();
+
+    await sendTelegram(chatId, "⏳ <b>Barcha foydalanuvchilarga xabar tarqatilmoqda...</b>");
+    const result = await broadcastMessage(rawText);
+
+    const reportMsg = `
+📢 <b>Xabar tarqatish (Broadcasting) yakunlandi!</b>
+
+👥 Jami a'zolar: <b>${result.total} ta</b>
+✅ Yetkazildi: <b>${result.sentCount} ta</b>
+❌ Yetib bormadi (bloklagan): <b>${result.failCount} ta</b>
+`.trim();
+
+    await sendTelegram(chatId, reportMsg, MAIN_REPLY_KEYBOARD);
+    return;
+  }
+
+  // B. Agar foydalanuvchi hozir ism-familiyasini kiritayotgan bo'lsa
   if (userState && userState.step === 'awaiting_full_name') {
     if (rawText && !rawText.startsWith('/')) {
       const fullName = rawText.trim();
@@ -837,7 +1069,7 @@ Quyidagi menyu tugmalaridan foydalanishingiz mumkin 👇
     }
   }
 
-  // B. Agar foydalanuvchi hali Ism-familiyasini kiritmagan bo'lsa (birinchi marta /start bosganda)
+  // C. Agar foydalanuvchi hali Ism-familiyasini kiritmagan bo'lsa (birinchi marta /start bosganda)
   if (!user || !user.fullName) {
     db.userStates[chatId] = { step: 'awaiting_full_name' };
     saveDatabase();
@@ -854,6 +1086,102 @@ Sizga shaxsan va hurmat bilan murojaat qilishimiz uchun, iltimos, <b>Ism va Fami
   }
 
   const userFullName = getUserFullName(chatId);
+
+  // -------------------------------------------------------------
+  // E. ADMIN BUYRUQLARI (/admin, /stats, /broadcast, /users, /add_admin)
+  // -------------------------------------------------------------
+  if (rawText === '/admin' || rawText === '/panel') {
+    if (!isAdmin(chatId)) {
+      await sendTelegram(chatId, `⛔ Hurmatli <b>${userFullName}</b>, bu bo'lim faqat bot administratorlari uchun.`);
+      return;
+    }
+
+    const adminWelcome = `
+👑 <b>Smart Finance — Administrator Boshqaruv Markazi</b>
+
+Hurmatli Admin <b>${userFullName}</b>, quyidagi buyruq yoki tugmalar orqali botni to'liq nazorat qilishingiz mumkin:
+
+📊 <b>/stats</b> — Botning barcha metrikalari va statistikasi
+📢 <b>/broadcast &lt;xabar&gt;</b> — Barcha foydalanuvchilarga xabar tarqatish
+👥 <b>/users</b> — Foydalanuvchilar ro'yxati va CSV hisoboti
+📢 <b>/set_channel @kanal</b> — Majburiy obuna kanalini o'zgartirish
+🔄 <b>/toggle_channel</b> — Majburiy obunani yoqish/o'chirish
+➕ <b>/add_admin &lt;chatId&gt;</b> — Yangi admin qo'shish
+`.trim();
+
+    await sendTelegram(chatId, adminWelcome, ADMIN_PANEL_KEYBOARD);
+    return;
+  }
+
+  // /stats
+  if (rawText === '/stats') {
+    if (!isAdmin(chatId)) {
+      await sendTelegram(chatId, "⛔ Bu buyruq faqat bot administratorlari uchun mo'ljallangan.");
+      return;
+    }
+    await sendAdminStats(chatId);
+    return;
+  }
+
+  // /broadcast
+  if (rawText.startsWith('/broadcast')) {
+    if (!isAdmin(chatId)) {
+      await sendTelegram(chatId, "⛔ Bu buyruq faqat bot administratorlari uchun mo'ljallangan.");
+      return;
+    }
+
+    const broadcastContent = rawText.replace('/broadcast', '').trim();
+    if (!broadcastContent) {
+      db.userStates[chatId] = { step: 'awaiting_broadcast_text' };
+      saveDatabase();
+      await sendTelegram(
+        chatId,
+        `📢 <b>Xabar tarqatish:</b> Iltimos, barcha a'zolarga jo'natmoqchi bo'lgan xabaringiz matnini kiriting:\n<i>(Bekor qilish: /cancel)</i>`
+      );
+      return;
+    }
+
+    await sendTelegram(chatId, "⏳ <b>Barcha foydalanuvchilarga xabar tarqatilmoqda...</b>");
+    const result = await broadcastMessage(broadcastContent);
+    const reportMsg = `
+📢 <b>Xabar tarqatish (Broadcasting) yakunlandi!</b>
+
+👥 Jami a'zolar: <b>${result.total} ta</b>
+✅ Yetkazildi: <b>${result.sentCount} ta</b>
+❌ Yetib bormadi (bloklagan): <b>${result.failCount} ta</b>
+`.trim();
+    await sendTelegram(chatId, reportMsg);
+    return;
+  }
+
+  // /users
+  if (rawText === '/users') {
+    if (!isAdmin(chatId)) {
+      await sendTelegram(chatId, "⛔ Bu buyruq faqat bot administratorlari uchun mo'ljallangan.");
+      return;
+    }
+    await sendAdminUsersList(chatId);
+    return;
+  }
+
+  // /add_admin
+  if (rawText.startsWith('/add_admin')) {
+    if (!isAdmin(chatId)) return;
+    const newAdminId = rawText.replace('/add_admin', '').trim();
+    if (!newAdminId) {
+      await sendTelegram(chatId, `Misol: <code>/add_admin 123456789</code>`);
+      return;
+    }
+    if (!db.settings.adminChatIds) db.settings.adminChatIds = [];
+    if (!db.settings.adminChatIds.includes(newAdminId)) {
+      db.settings.adminChatIds.push(newAdminId);
+      saveDatabase();
+      await sendTelegram(chatId, `✅ Yangi admin qo'shildi: <code>${newAdminId}</code>`);
+    } else {
+      await sendTelegram(chatId, `Ushbu ID allaqachon adminlar ro'yxatida mavjud.`);
+    }
+    return;
+  }
 
   // -------------------------------------------------------------
   // C. MEDIA ISHLOVLARI (RASM, OVOZ, VIDEO)
@@ -903,7 +1231,6 @@ Sizga shaxsan va hurmat bilan murojaat qilishimiz uchun, iltimos, <b>Ism va Fami
             `🎙️ <b>Hurmatli ${userFullName}, ovozli xabaringiz matni:</b>\n«<i>${transcribedText}</i>»`
           );
 
-          // Ovozdan moliyaviy amallarni tahlil qilish
           const parsed = parseNaturalLanguage(transcribedText);
           if (parsed && parsed.amount > 0) {
             const newTx = {
@@ -1049,6 +1376,7 @@ Bu bot orqali quyidagi barcha imkoniyatlardan foydalanishingiz mumkin:
 • Telegram Chat ID: <code>${chatId}</code>
 • Username: @${msg.from.username || 'mavjud emas'}
 • Ro'yxatdan o'tilgan: ${user.registeredAt ? user.registeredAt.split('T')[0] : 'Bugun'}
+• Mavqeingiz: <b>${isAdmin(chatId) ? 'Administrator 👑' : 'Foydalanuvchi 👤'}</b>
 
 <i>Ism-familiyangizni o'zgartirish uchun:</i>
 <code>/ism Yangi Ism Familiya</code> deb yozing.
@@ -1083,6 +1411,7 @@ Bu bot orqali quyidagi barcha imkoniyatlardan foydalanishingiz mumkin:
 ▫️ /tarix — Oxirgi 10 ta amal
 ▫️ /bekor — Oxirgi kiritilgan xatoni bekor qilish
 ▫️ /profil — Profil ma'lumotlari va ismni o'zgartirish
+${isAdmin(chatId) ? '\n👑 <b>Admin:</b> /admin, /stats, /broadcast, /users' : ''}
 `.trim();
     await sendTelegram(chatId, helpText);
     return;
@@ -1126,6 +1455,7 @@ Bu bot orqali quyidagi barcha imkoniyatlardan foydalanishingiz mumkin:
 
   // 6. Majburiy Obuna Kanalini Sozlash (/set_channel, /toggle_channel, /channel_status)
   if (rawText.startsWith('/set_channel')) {
+    if (!isAdmin(chatId)) return;
     const ch = rawText.replace('/set_channel', '').trim();
     if (!ch) {
       await sendTelegram(chatId, `Misol: <code>/set_channel @smartfinance_uz</code>`);
@@ -1139,6 +1469,7 @@ Bu bot orqali quyidagi barcha imkoniyatlardan foydalanishingiz mumkin:
   }
 
   if (rawText === '/toggle_channel') {
+    if (!isAdmin(chatId)) return;
     db.subscriptionConfig.isEnabled = !db.subscriptionConfig.isEnabled;
     saveDatabase();
     await sendTelegram(
@@ -1378,8 +1709,117 @@ Siz quyidagilarni amalga oshirishingiz mumkin:
 }
 
 // -------------------------------------------------------------
-// 9. HISOBOTLARNI SHAKLLANTIRISH
+// 9. HISOBOTLAR VA ADMIN FUNKSIYALARI
 // -------------------------------------------------------------
+
+/**
+ * ADMIN STATISTIKA XISOBOTI (/stats)
+ */
+async function sendAdminStats(chatId) {
+  const stats = getAdminGlobalStats();
+  const cfg = db.subscriptionConfig;
+
+  const msg = `
+📊 <b>Smart Finance Bot Global Statistikasi</b>
+<i>Sana: ${stats.today} ${getTimeStr()}</i>
+
+👥 <b>Foydalanuvchilar:</b>
+• Jami a'zolar soni: <b>${stats.totalUsers} ta</b>
+• Bugun yangi qo'shilganlar: <b>${stats.todayNewUsers} ta</b>
+• Bugun faol bo'lganlar (DAU): <b>${stats.todayActiveUsers} ta</b>
+
+💰 <b>Moliyaviy ko'rsatkichlar:</b>
+• Jami barcha operatsiyalar: <b>${stats.totalTransactions} ta</b>
+• Bugungi operatsiyalar: <b>${stats.todayTransactions} ta</b>
+• Jami kassa aylanmasi: <b>${formatMoney(stats.totalTurnover)}</b>
+• Jami tushum (Kirim): <b>+${formatMoney(stats.totalIncome)}</b>
+• Jami xarajat (Chiqim): <b>-${formatMoney(stats.totalExpense)}</b>
+
+━━━━━━━━━━━━━━━━━━━
+📈 <b>Bugungi kunlik tahlil:</b>
+• Bugungi kirim: <b>+${formatMoney(stats.todayIncome)}</b>
+• Bugungi chiqim: <b>-${formatMoney(stats.todayExpense)}</b>
+
+📢 <b>Majburiy obuna:</b> ${cfg.isEnabled ? `Faol ✅ (${cfg.channelUsername})` : 'O\'chiq ❌'}
+🤖 <b>Gemini AI kaliti:</b> ${db.settings?.geminiApiKey ? 'Ulangan ✅' : 'Kiritilmagan (Offline rejim) ⚠️'}
+`.trim();
+
+  await sendTelegram(chatId, msg, ADMIN_PANEL_KEYBOARD);
+}
+
+/**
+ * FOYDALANUVCHILAR RO'YXATI VA CSV EKSPORT (/users)
+ */
+async function sendAdminUsersList(chatId) {
+  const users = Object.entries(db.users || {});
+
+  if (users.length === 0) {
+    await sendTelegram(chatId, "Hozircha ro'yxatdan o'tgan foydalanuvchilar yo'q.");
+    return;
+  }
+
+  let listText = '';
+  users.slice(-10).reverse().forEach(([cId, u], idx) => {
+    listText += `${idx + 1}. <b>${u.fullName || 'Ismsiz'}</b> (ID: <code>${cId}</code>) ${u.username ? `@${u.username}` : ''}\n`;
+  });
+
+  const summary = `
+👥 <b>Foydalanuvchilar Ro'yxati:</b>
+<i>Jami a'zolar: ${users.length} ta</i>
+
+${listText}
+<i>Barcha foydalanuvchilarning to'liq ma'lumotlari quyidagi Excel faylda yuborildi 📥</i>
+`.trim();
+
+  await sendTelegram(chatId, summary);
+
+  try {
+    const csvBuffer = generateUsersCSV();
+    const filename = `smart_finance_foydalanuvchilar_${getTodayStr()}.csv`;
+    await sendDocumentToTelegram(
+      chatId,
+      csvBuffer,
+      filename,
+      `📋 <b>Barcha foydalanuvchilar ro'yxati (${users.length} ta)</b>`,
+      'text/csv;charset=utf-8;'
+    );
+  } catch (err) {
+    console.error('CSV jo\'natishda xato:', err.message);
+  }
+}
+
+async function sendChannelStatus(chatId) {
+  const cfg = db.subscriptionConfig;
+  const msg = `
+📢 <b>Majburiy Obuna Sozlamalari:</b>
+
+• Holat: <b>${cfg.isEnabled ? 'YOQIQ (Faol) ✅' : 'O\'CHIRILGAN ❌'}</b>
+• Kanal: <code>${cfg.channelUsername}</code>
+• Havola: ${cfg.channelUrl}
+• Kanal sarlavhasi: ${cfg.channelTitle}
+
+<i>Buyruqlar:</i>
+▫️ <code>/set_channel @kanal_nomi</code> — Kanalni o'zgartirish
+▫️ <code>/toggle_channel</code> — Obunani yoqish yoki o'chirish
+`.trim();
+  await sendTelegram(chatId, msg);
+}
+
+async function sendAdminHelp(chatId) {
+  const msg = `
+👑 <b>Admin Buyruqlari Qo'llanmasi:</b>
+
+▫️ <b>/admin</b> yoki <b>/panel</b> — Admin boshqaruv paneli
+▫️ <b>/stats</b> — Botning barcha statistikasi (foydalanuvchilar, faollik, aylanma)
+▫️ <b>/broadcast &lt;matn&gt;</b> — Barcha foydalanuvchilarga xabar tarqatish
+▫️ <b>/users</b> — Foydalanuvchilar ro'yxatini ko'rish va CSV qilib yuklash
+▫️ <b>/set_channel @kanal</b> — Majburiy kanalni o'rnatish
+▫️ <b>/toggle_channel</b> — Majburiy obunani yoqish/o'chirish
+▫️ <b>/add_admin &lt;chatId&gt;</b> — Yangi admin qo'shish
+`.trim();
+  await sendTelegram(chatId, msg);
+}
+
 async function sendTodayReport(chatId) {
   const stats = getTodayStats(chatId);
   const fullName = getUserFullName(chatId);
@@ -1569,6 +2009,13 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  if (url.pathname === '/api/admin-stats') {
+    const stats = getAdminGlobalStats();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true, stats }));
+    return;
+  }
+
   if (url.pathname === '/api/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
@@ -1597,7 +2044,7 @@ server.listen(HTTP_PORT, () => {
 let lastUpdateId = 0;
 
 async function startPolling() {
-  console.log('🤖 @xsobchi_bot Telegram Polling serveri (Shaxsiy Profil + Ism-Familiya) ishga tushdi...');
+  console.log('🤖 @xsobchi_bot Telegram Polling serveri (Admin Panel + Stats + Broadcast) ishga tushdi...');
 
   while (true) {
     try {

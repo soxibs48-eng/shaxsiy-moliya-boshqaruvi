@@ -1,7 +1,10 @@
 {
+  "users": {},
   "transactions": [],
   "userStates": {
-    "7452174818": null,
+    "7452174818": {
+      "step": "awaiting_full_name"
+    },
     "8875931989": null
   },
   "settings": {
