@@ -201,8 +201,9 @@ export interface FinanceContextType {
   setGoals: React.Dispatch<React.SetStateAction<Goal[]>>;
   setDebts: React.Dispatch<React.SetStateAction<Debt[]>>;
 
-  // Demo ma'lumotlar va eksport
+  // Demo ma'lumotlar va Telegram sinxronizatsiya
   loadDemoData: () => void;
+  syncTelegramBotTransactions: () => Promise<{ success: boolean; count: number; message: string }>;
 
   // Toast / Xabarlar
   toastMessage: string | null;

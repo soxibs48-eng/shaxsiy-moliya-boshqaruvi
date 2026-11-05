@@ -1432,6 +1432,72 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     showToast("26 ta realistik demo operatsiya va ma'lumotlar yuklandi! 🎉");
   };
 
+  // Telegram Bot orqali kiritilgan operatsiyalarni Web-ilovaga sinxronlash
+  const syncTelegramBotTransactions = async (): Promise<{ success: boolean; count: number; message: string }> => {
+    try {
+      const res = await fetch('http://127.0.0.1:3001/api/bot-transactions');
+      if (!res.ok) {
+        return { success: false, count: 0, message: "Bot API serveriga ulanib bo'lmadi." };
+      }
+
+      const data = await res.json();
+      if (!data.ok || !Array.isArray(data.transactions) || data.transactions.length === 0) {
+        return { success: true, count: 0, message: "Botda yangi operatsiyalar topilmadi." };
+      }
+
+      // Mavjud bo'lmagan operatsiyalarni topish
+      const existingIds = new Set(transactions.map((t) => t.id));
+      const newFromBot = data.transactions.filter((bt: any) => !existingIds.has(bt.id));
+
+      if (newFromBot.length === 0) {
+        return { success: true, count: 0, message: "Barcha bot operatsiyalari allaqachon sinxronlangan." };
+      }
+
+      const defaultWallet = wallets.find((w) => w.currency === 'UZS') || wallets[0];
+      if (!defaultWallet) {
+        return { success: false, count: 0, message: "Hamyon mavjud emas!" };
+      }
+
+      const txsToAdd: Transaction[] = [];
+      let walletDelta = 0;
+
+      newFromBot.forEach((bt: any) => {
+        const targetWallet = wallets.find((w) => w.currency === bt.currency) || defaultWallet;
+        const newTx: Transaction = {
+          id: bt.id || `tx-bot-${Date.now()}-${Math.random()}`,
+          walletId: targetWallet.id,
+          type: bt.type === 'income' ? 'income' : 'expense',
+          amount: Number(bt.amount) || 0,
+          currency: targetWallet.currency,
+          category: bt.category || (bt.type === 'income' ? 'Boshqa daromad' : 'Boshqa xarajat'),
+          date: bt.date || new Date().toISOString().split('T')[0],
+          note: bt.note ? `[Telegram] ${bt.note}` : '[Telegram] Operatsiya',
+        };
+
+        txsToAdd.push(newTx);
+        if (targetWallet.id === defaultWallet.id) {
+          walletDelta += newTx.type === 'income' ? newTx.amount : -newTx.amount;
+        }
+      });
+
+      setTransactions((prev) => [...txsToAdd, ...prev]);
+      setWallets((prev) =>
+        prev.map((w) => {
+          if (w.id === defaultWallet.id) {
+            return { ...w, balance: Math.max(0, w.balance + walletDelta) };
+          }
+          return w;
+        })
+      );
+
+      showToast(`Telegram botdan ${txsToAdd.length} ta operatsiya yuklandi va hisoblandi! 📲`);
+      return { success: true, count: txsToAdd.length, message: `${txsToAdd.length} ta operatsiya yuklandi` };
+    } catch (err: any) {
+      console.error('Bot sinxronizatsiya xatosi:', err);
+      return { success: false, count: 0, message: "Sinxronizatsiya xatosi: " + err.message };
+    }
+  };
+
   return (
     <FinanceContext.Provider
       value={{
@@ -1491,6 +1557,7 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
         setGoals,
         setDebts,
         loadDemoData,
+        syncTelegramBotTransactions,
         toastMessage,
         showToast,
         clearToast,

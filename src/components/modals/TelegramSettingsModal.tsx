@@ -9,10 +9,11 @@ import {
   ShieldCheck,
   Bell,
   RefreshCw,
+  DownloadCloud,
+  Zap,
 } from 'lucide-react';
 import {
   DEFAULT_TELEGRAM_BOT_USERNAME,
-  DEFAULT_TELEGRAM_BOT_TOKEN,
   getTelegramConfig,
   saveTelegramConfig,
   sendTestNotification,
@@ -30,12 +31,13 @@ export const TelegramSettingsModal: React.FC<TelegramSettingsModalProps> = ({
   isOpen,
   onClose,
 }) => {
-  const { showToast } = useFinance();
+  const { showToast, syncTelegramBotTransactions } = useFinance();
 
   const [config, setConfig] = useState<TelegramConfig>(getTelegramConfig());
   const [chatIdInput, setChatIdInput] = useState<string>('');
   const [isDetecting, setIsDetecting] = useState<boolean>(false);
   const [isSendingTest, setIsSendingTest] = useState<boolean>(false);
+  const [isSyncing, setIsSyncing] = useState<boolean>(false);
   const [statusMessage, setStatusMessage] = useState<{
     type: 'success' | 'error' | 'info';
     text: string;
@@ -123,6 +125,27 @@ export const TelegramSettingsModal: React.FC<TelegramSettingsModalProps> = ({
     }
   };
 
+  // Botdan kiritilgan xarajat va daromadlarni web ilovaga sinxronlash
+  const handleSyncBotTransactions = async () => {
+    setIsSyncing(true);
+    try {
+      const res = await syncTelegramBotTransactions();
+      if (res.success) {
+        setStatusMessage({
+          type: 'success',
+          text: `Sinxronizatsiya yakunlandi: ${res.message}!`,
+        });
+      } else {
+        setStatusMessage({
+          type: 'error',
+          text: res.message,
+        });
+      }
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/70 backdrop-blur-md animate-fadeIn">
       <div className="bg-white dark:bg-slate-900 rounded-3xl p-5 sm:p-6 max-w-lg w-full border border-slate-200 dark:border-slate-800 shadow-2xl relative max-h-[92vh] overflow-y-auto">
@@ -151,7 +174,7 @@ export const TelegramSettingsModal: React.FC<TelegramSettingsModalProps> = ({
               </span>
             </div>
             <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-              Barcha moliyaviy amallarni Telegram boti orqali nazorat qiling
+              Kunlik daromad va chiqimlarni Telegram orqali yozib boring va hisoblang
             </p>
           </div>
         </div>
@@ -166,7 +189,7 @@ export const TelegramSettingsModal: React.FC<TelegramSettingsModalProps> = ({
                   Rasmiy Bot: @{DEFAULT_TELEGRAM_BOT_USERNAME}
                 </span>
                 <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                  Token: <code>{DEFAULT_TELEGRAM_BOT_TOKEN.slice(0, 15)}...</code>
+                  Kunlik xarajat va daromadlarni avtomatik hisoblovchi bot
                 </p>
               </div>
             </div>
@@ -177,10 +200,37 @@ export const TelegramSettingsModal: React.FC<TelegramSettingsModalProps> = ({
               rel="noreferrer"
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-sky-500 hover:bg-sky-600 text-white text-xs font-bold shadow-md shadow-sky-500/30 transition-all shrink-0"
             >
-              <span>Botga o'tish</span>
+              <span>Botni ochish</span>
               <ExternalLink className="w-3.5 h-3.5" />
             </a>
           </div>
+        </div>
+
+        {/* Bot Sinxronizatsiya Tugmasi */}
+        <div className="mb-5 p-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl bg-emerald-500 text-white flex items-center justify-center shrink-0 shadow-sm">
+              <DownloadCloud className="w-5 h-5" />
+            </div>
+            <div>
+              <h5 className="text-xs font-bold text-slate-900 dark:text-white">
+                Telegramdagi operatsiyalarni yuklash
+              </h5>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                Botda yozilgan kunlik xarajatlarni ilovaga o'tkazish
+              </p>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={handleSyncBotTransactions}
+            disabled={isSyncing}
+            className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow-md shadow-emerald-600/30 transition-all flex items-center gap-1.5 shrink-0"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
+            <span>{isSyncing ? "Yuklanmoqda..." : "Sinxronlash"}</span>
+          </button>
         </div>
 
         {/* Holat Xabari */}
@@ -217,7 +267,7 @@ export const TelegramSettingsModal: React.FC<TelegramSettingsModalProps> = ({
                 type="text"
                 value={chatIdInput}
                 onChange={(e) => setChatIdInput(e.target.value)}
-                placeholder="Masalan: 123456789"
+                placeholder="Masalan: 7452174818"
                 className="flex-1 px-4 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-sm font-bold font-mono text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-sky-500"
               />
 
@@ -243,7 +293,7 @@ export const TelegramSettingsModal: React.FC<TelegramSettingsModalProps> = ({
             <div className="flex items-center gap-2">
               <Bell className="w-4 h-4 text-sky-500" />
               <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">
-                Ulanishni tekshirish
+                Xabarnomani tekshirish
               </span>
             </div>
 
@@ -259,11 +309,26 @@ export const TelegramSettingsModal: React.FC<TelegramSettingsModalProps> = ({
           </div>
         </div>
 
-        {/* 2. Xabarnoma sozlamalari (Toggles) */}
+        {/* 2. Botda yozish yo'riqnomasi (Tezkor qo'llanma) */}
+        <div className="mb-5 p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700/60">
+          <div className="flex items-center gap-2 mb-2">
+            <Zap className="w-4 h-4 text-amber-500" />
+            <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-200">
+              Botda kunlik hisob-kitob qilish:
+            </h4>
+          </div>
+          <div className="space-y-1.5 text-xs text-slate-600 dark:text-slate-300">
+            <p>• <b>Chiqim yozish:</b> <code>35000 obed</code>, <code>taksi 15k</code>, <code>benzin 50 000</code></p>
+            <p>• <b>Kirim yozish:</b> <code>+2000000 oylik</code>, <code>+500k frilans</code></p>
+            <p>• <b>Buyruqlar:</b> <code>/bugun</code> (kunlik kassa), <code>/oy</code> (oylik hisobot), <code>/balans</code>, <code>/bekor</code></p>
+          </div>
+        </div>
+
+        {/* 3. Xabarnoma sozlamalari (Toggles) */}
         <div className="space-y-3 mb-6 border-t border-slate-200 dark:border-slate-800 pt-4">
           <div className="flex items-center justify-between mb-2">
             <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400">
-              Qaysi amallarda xabar yuborilsin?
+              Qaysi amallarda botga xabar kelsin?
             </h4>
             <button
               type="button"
@@ -352,4 +417,3 @@ export const TelegramSettingsModal: React.FC<TelegramSettingsModalProps> = ({
     </div>
   );
 };
-
